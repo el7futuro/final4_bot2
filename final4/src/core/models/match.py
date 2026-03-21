@@ -36,17 +36,48 @@ class MatchPhase(str, Enum):
 
 
 class TurnState(BaseModel):
-    """Состояние текущего хода"""
+    """
+    Состояние текущего хода.
+    
+    ВАЖНО: В каждом ходу ОБА игрока делают ставки, затем ОДИН бросок кубика.
+    """
     turn_number: int = Field(ge=1)
-    current_manager_id: UUID
-    player_being_bet_on: Optional[UUID] = None
-    bets_placed: List[UUID] = Field(default_factory=list)
+    
+    # Ставки обоих игроков (ключ = manager_id как строка)
+    # Каждый игрок делает 2 ставки на одного своего игрока (кроме хода 1 - вратарь 1 ставка)
+    manager1_player_id: Optional[UUID] = None  # На кого ставит менеджер 1
+    manager1_bets: List[UUID] = Field(default_factory=list)  # ID ставок менеджера 1
+    manager1_ready: bool = Field(default=False)  # Менеджер 1 завершил ставки
+    
+    manager2_player_id: Optional[UUID] = None  # На кого ставит менеджер 2
+    manager2_bets: List[UUID] = Field(default_factory=list)  # ID ставок менеджера 2
+    manager2_ready: bool = Field(default=False)  # Менеджер 2 завершил ставки
+    
+    # Бросок кубика (один для обоих!)
     dice_rolled: bool = Field(default=False)
     dice_value: Optional[int] = Field(default=None, ge=1, le=6)
+    
+    # Карточки (каждый тянет свою при выигрыше)
+    manager1_card_id: Optional[UUID] = None
+    manager1_card_applied: bool = Field(default=False)
+    manager2_card_id: Optional[UUID] = None
+    manager2_card_applied: bool = Field(default=False)
+    
+    # Легаси поля для обратной совместимости
+    current_manager_id: Optional[UUID] = None  # Deprecated, но оставляем
+    bets_placed: List[UUID] = Field(default_factory=list)  # Все ставки хода
     card_drawn: bool = Field(default=False)
     card_id: Optional[UUID] = None
     card_applied: bool = Field(default=False)
     waiting_for_penalty_roll: bool = Field(default=False)
+    
+    def both_ready(self) -> bool:
+        """Оба игрока сделали ставки"""
+        return self.manager1_ready and self.manager2_ready
+    
+    def get_required_bets_count(self) -> int:
+        """Сколько ставок требуется (1 для вратаря, 2 для полевых)"""
+        return 1 if self.turn_number == 1 else 2
 
 
 class MatchScore(BaseModel):
@@ -193,6 +224,7 @@ class Match(BaseModel):
         Получить список доступных игроков для ставки в текущем ходе.
         
         Правила:
+        - ВСЕ 16 игроков заявки доступны (не только 11 на поле!)
         - Ход 1: только вратарь
         - Ходы 2+: все кроме вратаря
         - Игрок уже использован в матче: недоступен
@@ -205,7 +237,8 @@ class Match(BaseModel):
         used_players = self.get_used_players(manager_id)
         
         available = []
-        for player in team.get_field_players():
+        # Используем ВСЮ команду (16 игроков), а не только field_players
+        for player in team.players:
             # Игрок не доступен (удалён)
             if not player.is_available:
                 continue

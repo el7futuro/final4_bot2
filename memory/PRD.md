@@ -47,6 +47,11 @@ Clean Architecture с 4 слоями:
 - [x] REST API спроектирован
 - [x] Тесты спроектированы
 - [x] Edge cases описаны
+- [x] **CLAUDE.md конфиг создан**
+- [x] **Субагенты настроены (database-architect, core-engineer, platform-adapter, qa-reviewer)**
+- [x] **Rules для core/infrastructure/platforms**
+- [x] **Skills (implement-feature, create-migration, debug-issue)**
+- [x] **SPEC_TEMPLATE.md для новых фич**
 
 ## Backlog (P0 — критично)
 
@@ -70,15 +75,48 @@ Clean Architecture с 4 слоями:
 - [ ] Мобильное приложение
 - [ ] Premium функции
 
+## Структура проекта Final 4
+
+```
+final4/
+├── CLAUDE.md                    # Главный конфиг Claude Code
+├── SPEC_TEMPLATE.md             # Шаблон для новых фич
+├── .claude/
+│   ├── agents/
+│   │   ├── database-architect.md
+│   │   ├── core-engineer.md
+│   │   ├── platform-adapter.md
+│   │   └── qa-reviewer.md
+│   ├── rules/
+│   │   ├── core-rules.md
+│   │   ├── infrastructure-rules.md
+│   │   └── platforms-rules.md
+│   └── skills/
+│       ├── implement-feature.md
+│       ├── create-migration.md
+│       └── debug-issue.md
+└── docs/
+    ├── README.md
+    ├── 00_architecture_overview.md
+    ├── 01_core_module.md
+    ├── 02_infrastructure_module.md
+    ├── 03_telegram_adapter.md
+    ├── 04_vk_adapter.md
+    ├── 05_discord_adapter.md
+    ├── 06_rest_api.md
+    ├── 07_testing_module.md
+    └── 08_edge_cases.md
+```
+
 ## Файлы спецификации
 
-- `/app/docs/specs/README.md` — индекс
-- `/app/docs/specs/00_architecture_overview.md` — архитектура
-- `/app/docs/specs/01_core_module.md` — Core модуль
-- `/app/docs/specs/02_infrastructure_module.md` — инфраструктура
-- `/app/docs/specs/03_telegram_adapter.md` — Telegram
-- `/app/docs/specs/04_vk_adapter.md` — VK
-- `/app/docs/specs/05_discord_adapter.md` — Discord
-- `/app/docs/specs/06_rest_api.md` — REST API
-- `/app/docs/specs/07_testing_module.md` — тестирование
-- `/app/docs/specs/08_edge_cases.md` — edge cases
+- `/app/final4/docs/README.md` — индекс
+- `/app/final4/docs/00_architecture_overview.md` — архитектура
+- `/app/final4/docs/01_core_module.md` — Core модуль
+- `/app/final4/docs/02_infrastructure_module.md` — инфраструктура
+- `/app/final4/docs/03_telegram_adapter.md` — Telegram
+- `/app/final4/docs/04_vk_adapter.md` — VK
+- `/app/final4/docs/05_discord_adapter.md` — Discord
+- `/app/final4/docs/06_rest_api.md` — REST API
+- `/app/final4/docs/07_testing_module.md` — тестирование
+- `/app/final4/docs/08_edge_cases.md` — edge cases

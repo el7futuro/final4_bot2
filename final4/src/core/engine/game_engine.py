@@ -260,6 +260,12 @@ class GameEngine:
         if not match.current_turn:
             raise ValueError("Ход не начат")
         
+        # НОВОЕ: Помечаем игроков этого хода как использованных
+        turn_bets = match.get_turn_bets()
+        used_player_ids = set(b.player_id for b in turn_bets)
+        for player_id in used_player_ids:
+            match.mark_player_used(manager_id, player_id)
+        
         # Пересчитываем статистику команд
         if match.team1:
             match.team1.calculate_stats()
@@ -427,3 +433,40 @@ class GameEngine:
             return []
         
         return self.bet_tracker.get_available_bet_types(match, manager_id, player)
+    
+    def get_available_players(
+        self,
+        match: Match,
+        manager_id: UUID
+    ) -> List[Player]:
+        """
+        Получить список доступных игроков для ставки в текущем ходе.
+        
+        Учитывает:
+        - Номер хода (ход 1 = только вратарь, ходы 2+ = все кроме вратаря)
+        - Использованных игроков в матче
+        - Доступность игрока (не удалён)
+        """
+        return match.get_available_players_for_betting(manager_id)
+    
+    def can_player_bet(
+        self,
+        match: Match,
+        manager_id: UUID,
+        player_id: UUID
+    ) -> tuple[bool, str]:
+        """
+        Проверить, может ли игрок делать ставку.
+        
+        Returns:
+            (can_bet, reason)
+        """
+        team = match.get_team(manager_id)
+        if not team:
+            return False, "Команда не найдена"
+        
+        player = team.get_player_by_id(player_id)
+        if not player:
+            return False, "Игрок не найден"
+        
+        return self.bet_tracker.can_player_bet(match, manager_id, player)

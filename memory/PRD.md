@@ -12,42 +12,63 @@
 /app/final4/
 ├── src/
 │   ├── core/              # Чистая бизнес-логика (БЕЗ импортов фреймворков)
-│   │   ├── models/        # Pydantic модели (Player, Team, Match, Bet, etc.)
-│   │   ├── engine/        # Игровой движок, калькуляторы, колода карточек
-│   │   ├── ai/            # ИИ для бота-соперника
-│   │   └── interfaces/    # Абстрактные репозитории
-│   │
-│   ├── infrastructure/    # Работа с внешними системами
-│   │   ├── db/            # SQLAlchemy модели, подключение к PostgreSQL
-│   │   ├── cache/         # Redis клиент, кэш сессий, rate limiter
-│   │   ├── repositories/  # Реализации репозиториев
-│   │   └── events/        # Шина событий
-│   │
-│   ├── application/       # Application services
-│   │   └── services/      # UserService, MatchService
-│   │
-│   └── platforms/         # Платформенные адаптеры
-│       └── telegram/      # Telegram бот (aiogram 3.x)
-│           ├── handlers/  # Хендлеры команд и callback
-│           ├── keyboards/ # Inline клавиатуры
-│           ├── renderers/ # Рендеринг сообщений
-│           └── states/    # FSM состояния
-│
+│   ├── infrastructure/    # PostgreSQL, Redis, Repositories
+│   ├── application/       # UserService, MatchService
+│   └── platforms/         # Telegram (aiogram 3.x)
 ├── tests/                 # Unit и интеграционные тесты
 ├── scripts/               # Утилиты (simulate_match.py)
-└── docs/                  # Документация и спецификации
+└── docs/                  # Документация
 ```
 
-## Ключевые правила архитектуры
+## ✅ Реализованные правила игры (Декабрь 2025)
 
-### ✅ Core Module — БЕЗ ВНЕШНИХ ЗАВИСИМОСТЕЙ
-- Использует ТОЛЬКО: `pydantic`, `uuid`, `datetime`, `typing`, `enum`, `dataclasses`
-- НЕ импортирует: `aiogram`, `sqlalchemy`, `vkbottle`, `discord`, `redis`
+### Правило 1: Доступность игроков по ходам
+- **Ход 1**: доступен ТОЛЬКО вратарь (GK) ✅
+- **Ходы 2-11**: доступны ВСЕ игроки КРОМЕ вратаря ✅
 
-### ✅ База данных
-- PostgreSQL 15+ с Row Level Security (RLS)
-- UUID первичные ключи
-- JSONB для гибких данных (состав команды, колода карточек)
+### Правило 2: Отслеживание использованных игроков
+- Игрок может делать ставку только **1 раз за матч** ✅
+- После ставки игрок помечается как `used` ✅
+- К 11-му ходу остаётся 1 доступный игрок ✅
+
+### Правило 3: Максимум ставок на игрока за ход
+- Вратарь: **1 ставка за ход (и за матч)** ✅
+- Полевые: **2 ставки за ход** ✅
+
+### Правило 4: Лимиты ставок на гол (EXACT_NUMBER)
+- Защитники (DF): максимум **1 игрок** с голевой ставкой ✅
+- Полузащитники (MF): максимум **3 ставки** суммарно ✅
+- Форварды (FW): максимум **4 ставки** суммарно ✅
+
+### Правило 5: Ставка на чёт/нечёт (EVEN_ODD)
+- Форварды НЕ могут ставить на чёт/нечёт ✅
+- Максимум 6 ставок за матч ✅
+
+### Правило 6: Вратарь
+- Только ставка EVEN_ODD ✅
+- Только 1 ставка за весь матч ✅
+
+### Правило 7: Расчёт голов
+- Передачи снимают отбития ✅
+- 1 гол = 2 отбития ✅
+- Формула корректна ✅
+
+## Тестирование
+
+### Unit-тесты: 25 passed ✅
+```
+tests/unit/core/test_bet_tracker.py - 15 тестов
+tests/unit/core/test_game_engine.py - 10 тестов
+```
+
+### Ключевые тесты правил:
+- `test_turn_1_only_goalkeeper` ✅
+- `test_turn_2_no_goalkeeper` ✅
+- `test_player_marked_as_used` ✅
+- `test_used_player_cannot_bet` ✅
+- `test_available_players_decreases` ✅
+- `test_goalkeeper_only_one_bet_per_match` ✅
+- `test_max_3_goal_bets_from_midfielders` ✅
 
 ## Стек технологий
 
@@ -60,44 +81,12 @@
 | Telegram | aiogram 3.3+ |
 | Тесты | pytest, pytest-asyncio |
 
-## Реализовано
-
-### Core Module ✅
-- [x] Модели: Player, Team, Match, Bet, WhistleCard, User
-- [x] GameEngine — главный игровой движок
-- [x] BetTracker — валидация ставок по правилам
-- [x] ActionCalculator — расчёт действий при выигрыше
-- [x] ScoreCalculator — подсчёт итогового счёта
-- [x] WhistleDeck — управление колодой карточек
-- [x] Final4BotAI — ИИ бота-соперника
-
-### Infrastructure Module ✅
-- [x] Database — подключение к PostgreSQL
-- [x] SQLAlchemy модели (UserModel, TeamModel, MatchModel)
-- [x] Redis клиент и кэш сессий
-- [x] Репозитории (UserRepository, TeamRepository, MatchRepository)
-- [x] EventBus — шина событий
-
-### Application Layer ✅
-- [x] UserService — управление пользователями
-- [x] MatchService — управление матчами
-
-### Telegram Adapter ✅
-- [x] Handlers: start, profile, match, game
-- [x] Keyboards: главное меню, выбор формации, игровые действия
-- [x] MatchRenderer — рендеринг игрового состояния
-- [x] FSM States — состояния матча
-
-### Testing ✅
-- [x] Unit тесты Core модуля (16 тестов, 100% pass)
-- [x] Скрипт симуляции матча
-
 ## Не реализовано / Требует доработки
 
 ### P0 (Высокий приоритет)
 - [ ] Alembic миграции с RLS политиками
-- [ ] Интеграционные тесты с БД
-- [ ] Полный игровой цикл в Telegram боте
+- [ ] Интеграционные тесты с PostgreSQL/Redis
+- [ ] Полный игровой цикл в Telegram боте (end-to-end)
 
 ### P1 (Средний приоритет)
 - [ ] VK адаптер (vkbottle)
@@ -107,13 +96,7 @@
 ### P2 (Низкий приоритет)
 - [ ] Турнирная система
 - [ ] Система достижений
-- [ ] Платные подписки (Stripe/ЮKassa)
-
-## Credentials
-
-- **Telegram Bot Token**: Хранится в `/app/final4/.env` (BOT_TOKEN)
-- **PostgreSQL**: Требует настройки (DATABASE_URL)
-- **Redis**: Требует настройки (REDIS_URL)
+- [ ] Платные подписки
 
 ## Запуск
 
@@ -125,15 +108,11 @@ pip install -r requirements.txt
 # Запуск тестов
 pytest tests/unit/core/ -v
 
-# Симуляция матча (без платформы)
+# Симуляция матча
 python scripts/simulate_match.py
-
-# Запуск Telegram бота (требует PostgreSQL/Redis)
-python run_bot.py
 ```
 
 ## Последнее обновление
 
-**Дата**: Декабрь 2025
-
-**Статус**: MVP в разработке. Core модуль завершён и протестирован. Telegram адаптер структурирован. Требуется интеграционное тестирование.
+**Дата**: Декабрь 2025  
+**Статус**: Core модуль завершён, все правила реализованы и протестированы (25 тестов)

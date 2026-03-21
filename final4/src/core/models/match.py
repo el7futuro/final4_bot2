@@ -4,10 +4,11 @@
 from enum import Enum
 from uuid import UUID, uuid4
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Set
 from pydantic import BaseModel, Field
 
 from .team import Team
+from .player import Position
 from .bet import Bet
 from .whistle_card import WhistleCard
 
@@ -81,6 +82,13 @@ class Match(BaseModel):
     total_turns_main: int = Field(default=0)
     total_turns_extra: int = Field(default=0)
     
+    # Отслеживание использованных игроков (по менеджерам)
+    # Формат: {manager_id: set(player_ids)}
+    used_players_main_m1: List[str] = Field(default_factory=list)  # UUID as str для сериализации
+    used_players_main_m2: List[str] = Field(default_factory=list)
+    used_players_extra_m1: List[str] = Field(default_factory=list)
+    used_players_extra_m2: List[str] = Field(default_factory=list)
+    
     # Ставки и карточки
     bets: List[Bet] = Field(default_factory=list)
     whistle_cards_drawn: List[WhistleCard] = Field(default_factory=list)
@@ -136,3 +144,86 @@ class Match(BaseModel):
         self.bets.append(bet)
         if self.current_turn:
             self.current_turn.bets_placed.append(bet.id)
+    
+    # ========== Механизм использованных игроков ==========
+    
+    def get_used_players(self, manager_id: UUID) -> Set[UUID]:
+        """Получить множество использованных игроков для менеджера"""
+        if self.phase == MatchPhase.MAIN_TIME:
+            if manager_id == self.manager1_id:
+                return set(UUID(s) for s in self.used_players_main_m1)
+            else:
+                return set(UUID(s) for s in self.used_players_main_m2)
+        else:
+            # В дополнительное время учитываем И основное время
+            if manager_id == self.manager1_id:
+                main = set(UUID(s) for s in self.used_players_main_m1)
+                extra = set(UUID(s) for s in self.used_players_extra_m1)
+                return main | extra
+            else:
+                main = set(UUID(s) for s in self.used_players_main_m2)
+                extra = set(UUID(s) for s in self.used_players_extra_m2)
+                return main | extra
+    
+    def mark_player_used(self, manager_id: UUID, player_id: UUID) -> None:
+        """Пометить игрока как использованного в текущей фазе"""
+        player_str = str(player_id)
+        
+        if self.phase == MatchPhase.MAIN_TIME:
+            if manager_id == self.manager1_id:
+                if player_str not in self.used_players_main_m1:
+                    self.used_players_main_m1.append(player_str)
+            else:
+                if player_str not in self.used_players_main_m2:
+                    self.used_players_main_m2.append(player_str)
+        else:
+            if manager_id == self.manager1_id:
+                if player_str not in self.used_players_extra_m1:
+                    self.used_players_extra_m1.append(player_str)
+            else:
+                if player_str not in self.used_players_extra_m2:
+                    self.used_players_extra_m2.append(player_str)
+    
+    def is_player_used(self, manager_id: UUID, player_id: UUID) -> bool:
+        """Проверить, использован ли игрок"""
+        return player_id in self.get_used_players(manager_id)
+    
+    def get_available_players_for_betting(self, manager_id: UUID) -> List:
+        """
+        Получить список доступных игроков для ставки в текущем ходе.
+        
+        Правила:
+        - Ход 1: только вратарь
+        - Ходы 2+: все кроме вратаря
+        - Игрок уже использован в матче: недоступен
+        """
+        team = self.get_team(manager_id)
+        if not team:
+            return []
+        
+        turn_number = self.current_turn.turn_number if self.current_turn else 1
+        used_players = self.get_used_players(manager_id)
+        
+        available = []
+        for player in team.get_field_players():
+            # Игрок не доступен (удалён)
+            if not player.is_available:
+                continue
+            
+            # Игрок уже использован в этом матче
+            if player.id in used_players:
+                continue
+            
+            # Правило по номеру хода
+            if turn_number == 1:
+                # Первый ход — только вратарь
+                if player.position != Position.GOALKEEPER:
+                    continue
+            else:
+                # Ходы 2+ — все кроме вратаря
+                if player.position == Position.GOALKEEPER:
+                    continue
+            
+            available.append(player)
+        
+        return available

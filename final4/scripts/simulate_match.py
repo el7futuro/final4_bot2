@@ -3,6 +3,7 @@
 Скрипт симуляции матча без платформы.
 
 Демонстрирует работу Core модуля без Telegram/VK/Discord.
+Теперь с правильными правилами доступности игроков!
 """
 
 import sys
@@ -86,44 +87,58 @@ def print_team_stats(team: Team, label: str):
     print(f"  Голы: {team.stats.total_goals}")
 
 
-def simulate_turn(engine: GameEngine, match, manager_id, team: Team):
-    """Симулировать один ход"""
-    field_players = team.get_field_players()
+def simulate_turn(engine: GameEngine, match, manager_id, team: Team, turn_num: int):
+    """Симулировать один ход с учётом правил доступности"""
     
-    # Делаем ставки на случайных игроков
-    num_bets = random.randint(1, 3)
+    # Получаем доступных игроков через новый метод
+    available_players = engine.get_available_players(match, manager_id)
     
-    for _ in range(num_bets):
-        player = random.choice(field_players)
-        available_types = engine.get_available_bet_types(match, manager_id, player.id)
-        
-        if not available_types:
-            continue
-        
-        bet_type = random.choice(available_types)
-        
-        # Подготавливаем параметры ставки
-        bet_kwargs = {
-            "match_id": match.id,
-            "manager_id": manager_id,
-            "player_id": player.id,
-            "turn_number": match.current_turn.turn_number if match.current_turn else 1,
-            "bet_type": bet_type
-        }
-        
-        # Устанавливаем значение ставки
-        if bet_type == BetType.EVEN_ODD:
-            bet_kwargs["even_odd_choice"] = random.choice([EvenOddChoice.EVEN, EvenOddChoice.ODD])
-        elif bet_type == BetType.HIGH_LOW:
-            bet_kwargs["high_low_choice"] = random.choice([HighLowChoice.HIGH, HighLowChoice.LOW])
-        elif bet_type == BetType.EXACT_NUMBER:
-            bet_kwargs["exact_number"] = random.randint(1, 6)
-        
-        try:
-            bet = Bet(**bet_kwargs)
-            match, _ = engine.place_bet(match, manager_id, player.id, bet)
-        except ValueError:
-            pass
+    if not available_players:
+        print(f"  ⚠️ Нет доступных игроков!")
+        # Бросаем кубик без ставок
+        match, dice_value, won_bets = engine.roll_dice(match, manager_id)
+        match = engine.end_turn(match, manager_id)
+        return match, dice_value, 0
+    
+    print(f"  Доступных игроков: {len(available_players)}")
+    
+    # Выбираем одного игрока для ставки
+    player = random.choice(available_players)
+    
+    # Получаем доступные типы ставок
+    available_types = engine.get_available_bet_types(match, manager_id, player.id)
+    
+    if not available_types:
+        print(f"  ⚠️ Нет доступных типов ставок для {player.name}")
+        match, dice_value, won_bets = engine.roll_dice(match, manager_id)
+        match = engine.end_turn(match, manager_id)
+        return match, dice_value, 0
+    
+    bet_type = random.choice(available_types)
+    
+    # Подготавливаем параметры ставки
+    bet_kwargs = {
+        "match_id": match.id,
+        "manager_id": manager_id,
+        "player_id": player.id,
+        "turn_number": turn_num,
+        "bet_type": bet_type
+    }
+    
+    # Устанавливаем значение ставки
+    if bet_type == BetType.EVEN_ODD:
+        bet_kwargs["even_odd_choice"] = random.choice([EvenOddChoice.EVEN, EvenOddChoice.ODD])
+    elif bet_type == BetType.HIGH_LOW:
+        bet_kwargs["high_low_choice"] = random.choice([HighLowChoice.HIGH, HighLowChoice.LOW])
+    elif bet_type == BetType.EXACT_NUMBER:
+        bet_kwargs["exact_number"] = random.randint(1, 6)
+    
+    try:
+        bet = Bet(**bet_kwargs)
+        match, _ = engine.place_bet(match, manager_id, player.id, bet)
+        print(f"  Ставка: {player.name} ({player.position.value}) -> {bet_type.value}")
+    except ValueError as e:
+        print(f"  ⚠️ Ошибка ставки: {e}")
     
     # Бросаем кубик
     match, dice_value, won_bets = engine.roll_dice(match, manager_id)
@@ -134,7 +149,7 @@ def simulate_turn(engine: GameEngine, match, manager_id, team: Team):
         if card and not card.requires_target():
             match = engine.apply_whistle_card(match, manager_id, card.id)
     
-    # Завершаем ход
+    # Завершаем ход (это пометит игрока как использованного)
     match = engine.end_turn(match, manager_id)
     
     return match, dice_value, len(won_bets)
@@ -142,7 +157,7 @@ def simulate_turn(engine: GameEngine, match, manager_id, team: Team):
 
 def main():
     print("=" * 60)
-    print("⚽ Final 4 - Симуляция матча")
+    print("⚽ Final 4 - Симуляция матча (с правилами доступности)")
     print("=" * 60)
     
     engine = GameEngine()
@@ -151,14 +166,14 @@ def main():
     manager1_id = uuid4()
     manager2_id = uuid4()
     
-    print(f"\n👤 Менеджер 1: {manager1_id}")
-    print(f"👤 Менеджер 2: {manager2_id}")
+    print(f"\n👤 Менеджер 1: Спартак")
+    print(f"👤 Менеджер 2: ЦСКА")
     
     # Создаём матч
     match = engine.create_match(manager1_id, MatchType.RANDOM)
     match = engine.join_match(match, manager2_id)
     
-    print(f"\n📋 Матч создан: {match.id}")
+    print(f"\n📋 Матч создан")
     
     # Создаём команды
     team1 = create_team(manager1_id, "Спартак")
@@ -191,19 +206,26 @@ def main():
         
         current_manager = match.current_turn.current_manager_id
         is_manager1 = current_manager == manager1_id
+        turn_num = match.current_turn.turn_number
         
         team_name = "Спартак" if is_manager1 else "ЦСКА"
         team = match.team1 if is_manager1 else match.team2
         
-        match, dice, won = simulate_turn(engine, match, current_manager, team)
+        print(f"\n--- Ход {turn_count} (внутренний #{turn_num}): {team_name} ---")
         
-        print(f"\nХод {turn_count}: {team_name} | Кубик: {dice} | Выиграно ставок: {won}")
+        match, dice, won = simulate_turn(engine, match, current_manager, team, turn_num)
+        
+        print(f"  🎲 Кубик: {dice} | Выиграно: {won}")
+        
+        # Показываем использованных игроков
+        used = match.get_used_players(current_manager)
+        print(f"  📝 Использовано игроков: {len(used)}")
         
         # Проверяем завершение матча
         if match.status != MatchStatus.IN_PROGRESS:
             break
         
-        if turn_count > 50:  # Защита от бесконечного цикла
+        if turn_count > 30:  # Защита от бесконечного цикла
             print("\n⚠️ Превышен лимит ходов")
             break
     
@@ -216,6 +238,11 @@ def main():
     print_team_stats(match.team2, "🔴")
     
     print(f"\n📊 Счёт: {match.score.manager1_goals}:{match.score.manager2_goals}")
+    
+    # Показываем использованных игроков
+    print(f"\n📋 Использовано игроков:")
+    print(f"  Спартак: {len(match.get_used_players(manager1_id))}")
+    print(f"  ЦСКА: {len(match.get_used_players(manager2_id))}")
     
     if match.result:
         winner_name = "Спартак" if match.result.winner_id == manager1_id else "ЦСКА"

@@ -2,8 +2,11 @@
 """
 Скрипт симуляции матча без платформы.
 
-Демонстрирует работу Core модуля без Telegram/VK/Discord.
-Теперь с правильными правилами доступности игроков!
+ОБНОВЛЕНО: Теперь с правильной логикой одновременных ставок!
+- Оба менеджера делают ставки
+- Один бросок кубика для обоих
+- Автоматическое вытягивание карточек при выигрыше
+- 2 ставки должны быть РАЗНЫХ типов
 """
 
 import sys
@@ -22,7 +25,7 @@ from src.core.models.bet import Bet, BetType, EvenOddChoice, HighLowChoice
 
 
 def create_team(manager_id, name: str) -> Team:
-    """Создать тестовую команду"""
+    """Создать тестовую команду с 16 игроками"""
     players = []
     number = 1
     
@@ -87,77 +90,149 @@ def print_team_stats(team: Team, label: str):
     print(f"  Голы: {team.stats.total_goals}")
 
 
-def simulate_turn(engine: GameEngine, match, manager_id, team: Team, turn_num: int):
-    """Симулировать один ход с учётом правил доступности"""
+def make_bets_for_manager(engine: GameEngine, match, manager_id, team: Team, turn_num: int) -> bool:
+    """
+    Сделать ставки для одного менеджера.
     
-    # Получаем доступных игроков через новый метод
+    Returns:
+        True если ставки успешно сделаны, False если нет доступных игроков
+    """
+    # Получаем доступных игроков
     available_players = engine.get_available_players(match, manager_id)
     
     if not available_players:
-        print(f"  ⚠️ Нет доступных игроков!")
-        # Бросаем кубик без ставок
-        match, dice_value, won_bets = engine.roll_dice(match, manager_id)
-        match = engine.end_turn(match, manager_id)
-        return match, dice_value, 0
+        print(f"    ⚠️ Нет доступных игроков!")
+        return False
     
-    print(f"  Доступных игроков: {len(available_players)}")
-    
-    # Выбираем одного игрока для ставки
+    # Выбираем одного игрока
     player = random.choice(available_players)
     
     # Получаем доступные типы ставок
     available_types = engine.get_available_bet_types(match, manager_id, player.id)
     
     if not available_types:
-        print(f"  ⚠️ Нет доступных типов ставок для {player.name}")
-        match, dice_value, won_bets = engine.roll_dice(match, manager_id)
-        match = engine.end_turn(match, manager_id)
-        return match, dice_value, 0
+        print(f"    ⚠️ Нет типов ставок для {player.name}")
+        return False
     
-    bet_type = random.choice(available_types)
+    # Сколько ставок нужно (1 для вратаря, 2 для полевых)
+    required_bets = 1 if turn_num == 1 else 2
     
-    # Подготавливаем параметры ставки
-    bet_kwargs = {
-        "match_id": match.id,
-        "manager_id": manager_id,
-        "player_id": player.id,
-        "turn_number": turn_num,
-        "bet_type": bet_type
-    }
+    print(f"    Игрок: {player.name} ({player.position.value})")
+    print(f"    Доступные типы: {[t.value for t in available_types]}")
     
-    # Устанавливаем значение ставки
-    if bet_type == BetType.EVEN_ODD:
-        bet_kwargs["even_odd_choice"] = random.choice([EvenOddChoice.EVEN, EvenOddChoice.ODD])
-    elif bet_type == BetType.HIGH_LOW:
-        bet_kwargs["high_low_choice"] = random.choice([HighLowChoice.HIGH, HighLowChoice.LOW])
-    elif bet_type == BetType.EXACT_NUMBER:
-        bet_kwargs["exact_number"] = random.randint(1, 6)
+    # Делаем ставки
+    used_types = []
+    for i in range(min(required_bets, len(available_types))):
+        # Выбираем тип, который ещё не использовали
+        remaining_types = [t for t in available_types if t not in used_types]
+        if not remaining_types:
+            break
+        
+        bet_type = random.choice(remaining_types)
+        used_types.append(bet_type)
+        
+        # Подготавливаем параметры ставки
+        bet_kwargs = {
+            "match_id": match.id,
+            "manager_id": manager_id,
+            "player_id": player.id,
+            "turn_number": turn_num,
+            "bet_type": bet_type
+        }
+        
+        # Устанавливаем значение ставки
+        if bet_type == BetType.EVEN_ODD:
+            bet_kwargs["even_odd_choice"] = random.choice([EvenOddChoice.EVEN, EvenOddChoice.ODD])
+        elif bet_type == BetType.HIGH_LOW:
+            bet_kwargs["high_low_choice"] = random.choice([HighLowChoice.HIGH, HighLowChoice.LOW])
+        elif bet_type == BetType.EXACT_NUMBER:
+            bet_kwargs["exact_number"] = random.randint(1, 6)
+        
+        try:
+            bet = Bet(**bet_kwargs)
+            match, _ = engine.place_bet(match, manager_id, player.id, bet)
+            print(f"    Ставка {i+1}: {bet_type.value} -> {bet.get_display_value()}")
+        except ValueError as e:
+            print(f"    ⚠️ Ошибка ставки: {e}")
+            return False
     
+    # Подтверждаем завершение ставок
     try:
-        bet = Bet(**bet_kwargs)
-        match, _ = engine.place_bet(match, manager_id, player.id, bet)
-        print(f"  Ставка: {player.name} ({player.position.value}) -> {bet_type.value}")
+        engine.confirm_bets(match, manager_id)
+        print(f"    ✅ Ставки подтверждены")
     except ValueError as e:
-        print(f"  ⚠️ Ошибка ставки: {e}")
+        print(f"    ⚠️ Ошибка подтверждения: {e}")
+        return False
     
-    # Бросаем кубик
-    match, dice_value, won_bets = engine.roll_dice(match, manager_id)
+    return True
+
+
+def simulate_turn(engine: GameEngine, match, manager1_id, manager2_id, team1: Team, team2: Team, turn_num: int):
+    """
+    Симулировать один ход (оба менеджера ставят, один бросок).
+    """
+    print(f"\n{'='*50}")
+    print(f"ХОД {turn_num}")
+    print(f"{'='*50}")
     
-    # Берём карточку если выиграли
-    if won_bets:
-        match, card = engine.draw_whistle_card(match, manager_id)
-        if card and not card.requires_target():
-            match = engine.apply_whistle_card(match, manager_id, card.id)
+    # Менеджер 1 делает ставки
+    print(f"\n  📋 Спартак делает ставки:")
+    success1 = make_bets_for_manager(engine, match, manager1_id, team1, turn_num)
     
-    # Завершаем ход (это пометит игрока как использованного)
-    match = engine.end_turn(match, manager_id)
+    # Менеджер 2 делает ставки
+    print(f"\n  📋 ЦСКА делает ставки:")
+    success2 = make_bets_for_manager(engine, match, manager2_id, team2, turn_num)
     
-    return match, dice_value, len(won_bets)
+    # Проверяем, можно ли бросить кубик
+    can_roll, reason = engine.can_roll_dice(match)
+    if not can_roll:
+        print(f"\n  ⚠️ Нельзя бросить кубик: {reason}")
+        return match
+    
+    # Бросаем кубик — ОДИН для обоих!
+    print(f"\n  🎲 Бросок кубика...")
+    match, dice_value, won_bets = engine.roll_dice(match)
+    
+    print(f"  🎲 Результат: {dice_value}")
+    
+    # Показываем результаты для каждого менеджера
+    for manager_id, bets in won_bets.items():
+        team_name = "Спартак" if manager_id == manager1_id else "ЦСКА"
+        if bets:
+            print(f"  ✅ {team_name} выиграл {len(bets)} ставок!")
+            for bet in bets:
+                print(f"      - {bet.bet_type.value}: {bet.get_display_value()}")
+        else:
+            print(f"  ❌ {team_name} проиграл все ставки")
+    
+    # Показываем вытянутые карточки (автоматически)
+    if match.current_turn.manager1_card_id:
+        card = next((c for c in match.whistle_cards_drawn 
+                    if c.id == match.current_turn.manager1_card_id), None)
+        if card:
+            print(f"  🃏 Спартак получил карточку: {card.card_type.value}")
+    
+    if match.current_turn.manager2_card_id:
+        card = next((c for c in match.whistle_cards_drawn 
+                    if c.id == match.current_turn.manager2_card_id), None)
+        if card:
+            print(f"  🃏 ЦСКА получил карточку: {card.card_type.value}")
+    
+    # Завершаем ход
+    match = engine.end_turn(match)
+    
+    # Показываем использованных игроков
+    print(f"\n  📝 Использовано игроков:")
+    print(f"      Спартак: {len(match.get_used_players(manager1_id))}")
+    print(f"      ЦСКА: {len(match.get_used_players(manager2_id))}")
+    
+    return match
 
 
 def main():
     print("=" * 60)
-    print("⚽ Final 4 - Симуляция матча (с правилами доступности)")
+    print("⚽ Final 4 - Симуляция матча")
+    print("   (Одновременные ставки + один бросок кубика)")
     print("=" * 60)
     
     engine = GameEngine()
@@ -197,36 +272,25 @@ def main():
     print("=" * 60)
     
     turn_count = 0
+    max_turns = 11  # Основное время
     
-    while match.status == MatchStatus.IN_PROGRESS:
+    while match.status == MatchStatus.IN_PROGRESS and turn_count < max_turns:
         turn_count += 1
         
         if not match.current_turn:
             break
         
-        current_manager = match.current_turn.current_manager_id
-        is_manager1 = current_manager == manager1_id
         turn_num = match.current_turn.turn_number
         
-        team_name = "Спартак" if is_manager1 else "ЦСКА"
-        team = match.team1 if is_manager1 else match.team2
-        
-        print(f"\n--- Ход {turn_count} (внутренний #{turn_num}): {team_name} ---")
-        
-        match, dice, won = simulate_turn(engine, match, current_manager, team, turn_num)
-        
-        print(f"  🎲 Кубик: {dice} | Выиграно: {won}")
-        
-        # Показываем использованных игроков
-        used = match.get_used_players(current_manager)
-        print(f"  📝 Использовано игроков: {len(used)}")
+        match = simulate_turn(
+            engine, match, 
+            manager1_id, manager2_id, 
+            match.team1, match.team2, 
+            turn_num
+        )
         
         # Проверяем завершение матча
         if match.status != MatchStatus.IN_PROGRESS:
-            break
-        
-        if turn_count > 30:  # Защита от бесконечного цикла
-            print("\n⚠️ Превышен лимит ходов")
             break
     
     # Результаты
@@ -243,6 +307,9 @@ def main():
     print(f"\n📋 Использовано игроков:")
     print(f"  Спартак: {len(match.get_used_players(manager1_id))}")
     print(f"  ЦСКА: {len(match.get_used_players(manager2_id))}")
+    
+    # Показываем вытянутые карточки
+    print(f"\n🃏 Вытянуто карточек: {len(match.whistle_cards_drawn)}")
     
     if match.result:
         winner_name = "Спартак" if match.result.winner_id == manager1_id else "ЦСКА"

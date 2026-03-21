@@ -334,6 +334,7 @@ class TestMaxBetsPerTurn:
         )
         match.bets.append(bet1)
         match.current_turn.bets_placed.append(bet1.id)
+        match.current_turn.manager1_bets.append(bet1.id)
         
         # Вторая ставка в том же ходе — ошибка (вратарь уже ставил в матче)
         bet2 = Bet(
@@ -356,19 +357,32 @@ class TestMaxBetsPerTurn:
         
         defender = match.team1.players[1]
         
-        # Первые 2 ставки — OK
-        for i in range(2):
-            bet = Bet(
-                id=uuid4(),
-                match_id=match.id,
-                manager_id=manager_id,
-                player_id=defender.id,
-                turn_number=2,
-                bet_type=BetType.HIGH_LOW,
-                high_low_choice=HighLowChoice.HIGH
-            )
-            match.bets.append(bet)
-            match.current_turn.bets_placed.append(bet.id)
+        # Первые 2 ставки РАЗНЫХ типов — OK
+        bet1 = Bet(
+            id=uuid4(),
+            match_id=match.id,
+            manager_id=manager_id,
+            player_id=defender.id,
+            turn_number=2,
+            bet_type=BetType.HIGH_LOW,
+            high_low_choice=HighLowChoice.HIGH
+        )
+        match.bets.append(bet1)
+        match.current_turn.bets_placed.append(bet1.id)
+        match.current_turn.manager1_bets.append(bet1.id)
+        
+        bet2 = Bet(
+            id=uuid4(),
+            match_id=match.id,
+            manager_id=manager_id,
+            player_id=defender.id,
+            turn_number=2,
+            bet_type=BetType.EVEN_ODD,  # Другой тип!
+            even_odd_choice=EvenOddChoice.EVEN
+        )
+        match.bets.append(bet2)
+        match.current_turn.bets_placed.append(bet2.id)
+        match.current_turn.manager1_bets.append(bet2.id)
         
         # 3-я ставка — ошибка
         bet3 = Bet(
@@ -376,8 +390,8 @@ class TestMaxBetsPerTurn:
             manager_id=manager_id,
             player_id=defender.id,
             turn_number=2,
-            bet_type=BetType.HIGH_LOW,
-            high_low_choice=HighLowChoice.LOW
+            bet_type=BetType.EXACT_NUMBER,
+            exact_number=5
         )
         
         with pytest.raises(ValueError, match="Максимум 2"):

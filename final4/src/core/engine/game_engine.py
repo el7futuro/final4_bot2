@@ -3,7 +3,7 @@
 
 from uuid import UUID, uuid4
 from datetime import datetime
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 import random
 
 from ..models.match import (
@@ -104,7 +104,8 @@ class GameEngine:
         match.started_at = datetime.utcnow()
         match.current_turn = TurnState(
             turn_number=1,
-            current_manager_id=match.manager1_id  # Создатель ходит первым
+            # ИСПРАВЛЕНО: Убираем current_manager_id — оба ставят одновременно
+            current_manager_id=None  # Deprecated, но оставляем для обратной совместимости
         )
         return match
     
@@ -115,12 +116,26 @@ class GameEngine:
         player_id: UUID,
         bet: Bet
     ) -> Tuple[Match, Bet]:
-        """Разместить ставку"""
-        if not match.is_manager_turn(manager_id):
-            raise ValueError("Сейчас не ваш ход")
+        """
+        Разместить ставку.
         
-        if match.current_turn and match.current_turn.dice_rolled:
+        ИСПРАВЛЕНО: Теперь оба менеджера делают ставки одновременно.
+        Кубик бросается только когда ОБА завершили ставки.
+        """
+        if not match.is_participant(manager_id):
+            raise ValueError("Вы не участник этого матча")
+        
+        if not match.current_turn:
+            raise ValueError("Ход не начат")
+        
+        if match.current_turn.dice_rolled:
             raise ValueError("Кубик уже брошен, ставки закрыты")
+        
+        # Проверяем, не завершил ли уже этот менеджер ставки
+        if manager_id == match.manager1_id and match.current_turn.manager1_ready:
+            raise ValueError("Вы уже завершили ставки в этом ходу")
+        if manager_id == match.manager2_id and match.current_turn.manager2_ready:
+            raise ValueError("Вы уже завершили ставки в этом ходу")
         
         team = match.get_team(manager_id)
         if not team:
@@ -130,8 +145,13 @@ class GameEngine:
         if not player:
             raise ValueError("Игрок не найден")
         
-        if not player.is_on_field:
-            raise ValueError("Игрок не на поле")
+        # Проверяем, что ставки делаются на ОДНОГО игрока за ход
+        if manager_id == match.manager1_id:
+            if match.current_turn.manager1_player_id and match.current_turn.manager1_player_id != player_id:
+                raise ValueError("В этом ходу нужно делать ставки на одного игрока")
+        else:
+            if match.current_turn.manager2_player_id and match.current_turn.manager2_player_id != player_id:
+                raise ValueError("В этом ходу нужно делать ставки на одного игрока")
         
         # Валидация правил ставок
         self.bet_tracker.validate_bet(match, manager_id, player, bet)
@@ -141,65 +161,195 @@ class GameEngine:
         bet.match_id = match.id
         bet.manager_id = manager_id
         bet.player_id = player_id
-        bet.turn_number = match.current_turn.turn_number if match.current_turn else 1
+        bet.turn_number = match.current_turn.turn_number
         
-        match.add_bet(bet)
+        # Добавляем ставку
+        match.bets.append(bet)
+        
+        # Регистрируем в текущем ходе
+        if manager_id == match.manager1_id:
+            match.current_turn.manager1_player_id = player_id
+            match.current_turn.manager1_bets.append(bet.id)
+        else:
+            match.current_turn.manager2_player_id = player_id
+            match.current_turn.manager2_bets.append(bet.id)
+        
+        # Для обратной совместимости
+        match.current_turn.bets_placed.append(bet.id)
         
         return match, bet
     
-    def roll_dice(self, match: Match, manager_id: UUID) -> Tuple[Match, int, List[Bet]]:
-        """Бросить кубик и определить результаты ставок"""
-        if not match.is_manager_turn(manager_id):
-            raise ValueError("Сейчас не ваш ход")
+    def confirm_bets(self, match: Match, manager_id: UUID) -> Match:
+        """
+        Подтвердить завершение ставок менеджером.
+        
+        НОВЫЙ МЕТОД: Менеджер вызывает после того, как сделал все ставки.
+        """
+        if not match.is_participant(manager_id):
+            raise ValueError("Вы не участник этого матча")
         
         if not match.current_turn:
             raise ValueError("Ход не начат")
         
         if match.current_turn.dice_rolled:
-            raise ValueError("Кубик уже брошен в этот ход")
+            raise ValueError("Кубик уже брошен")
         
-        # Бросок
+        turn_number = match.current_turn.turn_number
+        required_bets = match.current_turn.get_required_bets_count()
+        
+        # Проверяем количество ставок
+        if manager_id == match.manager1_id:
+            current_bets = len(match.current_turn.manager1_bets)
+            if current_bets < required_bets:
+                raise ValueError(f"Нужно сделать {required_bets} ставок (сделано {current_bets})")
+            match.current_turn.manager1_ready = True
+        else:
+            current_bets = len(match.current_turn.manager2_bets)
+            if current_bets < required_bets:
+                raise ValueError(f"Нужно сделать {required_bets} ставок (сделано {current_bets})")
+            match.current_turn.manager2_ready = True
+        
+        return match
+    
+    def can_roll_dice(self, match: Match) -> Tuple[bool, str]:
+        """Проверить, можно ли бросить кубик (оба готовы?)"""
+        if not match.current_turn:
+            return False, "Ход не начат"
+        
+        if match.current_turn.dice_rolled:
+            return False, "Кубик уже брошен"
+        
+        if not match.current_turn.both_ready():
+            ready_status = []
+            if match.current_turn.manager1_ready:
+                ready_status.append("Менеджер 1 готов")
+            else:
+                ready_status.append("Менеджер 1 ещё делает ставки")
+            if match.current_turn.manager2_ready:
+                ready_status.append("Менеджер 2 готов")
+            else:
+                ready_status.append("Менеджер 2 ещё делает ставки")
+            return False, "; ".join(ready_status)
+        
+        return True, "OK"
+    
+    def roll_dice(self, match: Match) -> Tuple[Match, int, Dict[UUID, List[Bet]]]:
+        """
+        Бросить кубик и определить результаты ставок ОБОИХ игроков.
+        
+        ИСПРАВЛЕНО: 
+        - Один бросок для обоих менеджеров
+        - Автоматическое вытягивание карточки при выигрыше
+        
+        Returns:
+            (match, dice_value, won_bets_by_manager)
+            won_bets_by_manager: {manager_id: [winning_bets]}
+        """
+        can_roll, reason = self.can_roll_dice(match)
+        if not can_roll:
+            raise ValueError(reason)
+        
+        # Бросок — ОДИН для обоих!
         dice_value = random.randint(1, 6)
         match.current_turn.dice_rolled = True
         match.current_turn.dice_value = dice_value
         
-        # Определяем результаты ставок этого хода
-        turn_bets = match.get_turn_bets()
-        won_bets = []
+        # Определяем результаты ставок для ОБОИХ менеджеров
+        won_bets_by_manager: Dict[UUID, List[Bet]] = {
+            match.manager1_id: [],
+            match.manager2_id: []
+        }
         
-        team = match.get_team(manager_id)
+        # Обрабатываем все ставки этого хода
+        all_turn_bet_ids = set(match.current_turn.bets_placed)
         
-        for bet in turn_bets:
+        for bet in match.bets:
+            if bet.id not in all_turn_bet_ids:
+                continue
+            
             outcome = bet.resolve(dice_value)
+            
             if outcome == BetOutcome.WON:
-                won_bets.append(bet)
+                won_bets_by_manager[bet.manager_id].append(bet)
+                
                 # Начисляем действия
+                team = match.get_team(bet.manager_id)
                 if team:
                     player = team.get_player_by_id(bet.player_id)
                     if player:
                         self.action_calculator.apply_bet_result(player, bet)
         
-        return match, dice_value, won_bets
+        # АВТОМАТИЧЕСКОЕ ВЫТЯГИВАНИЕ КАРТОЧЕК
+        # Менеджер 1
+        if won_bets_by_manager.get(match.manager1_id):
+            match, card1 = self._auto_draw_whistle_card(match, match.manager1_id)
+            if card1:
+                match.current_turn.manager1_card_id = card1.id
+        
+        # Менеджер 2
+        if match.manager2_id and won_bets_by_manager.get(match.manager2_id):
+            match, card2 = self._auto_draw_whistle_card(match, match.manager2_id)
+            if card2:
+                match.current_turn.manager2_card_id = card2.id
+        
+        return match, dice_value, won_bets_by_manager
+    
+    def _auto_draw_whistle_card(
+        self,
+        match: Match,
+        manager_id: UUID
+    ) -> Tuple[Match, Optional[WhistleCard]]:
+        """
+        Автоматически вытянуть карточку Свисток при выигрыше ставки.
+        
+        Вызывается из roll_dice(), не требует отдельного вызова.
+        """
+        if not match.whistle_deck:
+            return match, None
+        
+        card = WhistleDeck.draw_card(match.whistle_deck)
+        if card:
+            card.applied_by_manager_id = manager_id
+            card.turn_applied = match.current_turn.turn_number if match.current_turn else 1
+            match.whistle_cards_drawn.append(card)
+        
+        return match, card
     
     def draw_whistle_card(
         self,
         match: Match,
         manager_id: UUID
     ) -> Tuple[Match, Optional[WhistleCard]]:
-        """Взять карточку Свисток (если есть выигравшие ставки)"""
-        if not match.is_manager_turn(manager_id):
-            raise ValueError("Сейчас не ваш ход")
+        """
+        Взять карточку Свисток (если есть выигравшие ставки).
+        
+        DEPRECATED: Карточки теперь вытягиваются автоматически в roll_dice().
+        Этот метод оставлен для обратной совместимости.
+        """
+        if not match.is_participant(manager_id):
+            raise ValueError("Вы не участник этого матча")
         
         if not match.current_turn:
             raise ValueError("Ход не начат")
         
-        if match.current_turn.card_drawn:
-            raise ValueError("Карточка уже взята в этот ход")
+        # Проверяем, не взята ли уже карточка
+        if manager_id == match.manager1_id:
+            if match.current_turn.manager1_card_id:
+                # Карточка уже взята автоматически
+                card = next((c for c in match.whistle_cards_drawn 
+                            if c.id == match.current_turn.manager1_card_id), None)
+                return match, card
+        else:
+            if match.current_turn.manager2_card_id:
+                card = next((c for c in match.whistle_cards_drawn 
+                            if c.id == match.current_turn.manager2_card_id), None)
+                return match, card
         
         # Проверяем, есть ли выигравшие ставки
         turn_bets = match.get_turn_bets()
-        won_any = any(b.outcome == BetOutcome.WON for b in turn_bets)
+        won_any = any(b.outcome == BetOutcome.WON and b.manager_id == manager_id for b in turn_bets)
         
+        # Для обратной совместимости
         match.current_turn.card_drawn = True
         
         if not won_any:
@@ -214,6 +364,12 @@ class GameEngine:
             card.turn_applied = match.current_turn.turn_number
             match.current_turn.card_id = card.id
             match.whistle_cards_drawn.append(card)
+            
+            # Записываем в новые поля
+            if manager_id == match.manager1_id:
+                match.current_turn.manager1_card_id = card.id
+            else:
+                match.current_turn.manager2_card_id = card.id
         
         return match, card
     
@@ -225,8 +381,8 @@ class GameEngine:
         target_player_id: Optional[UUID] = None
     ) -> Match:
         """Применить карточку Свисток"""
-        if not match.is_manager_turn(manager_id):
-            raise ValueError("Сейчас не ваш ход")
+        if not match.is_participant(manager_id):
+            raise ValueError("Вы не участник этого матча")
         
         # Находим карточку
         card = next((c for c in match.whistle_cards_drawn if c.id == card_id), None)
@@ -235,6 +391,10 @@ class GameEngine:
         
         if card.is_used:
             raise ValueError("Карточка уже использована")
+        
+        # Проверяем, что карточка принадлежит этому менеджеру
+        if card.applied_by_manager_id != manager_id:
+            raise ValueError("Это не ваша карточка")
         
         # Проверяем, нужна ли цель
         if card.requires_target() and not target_player_id:
@@ -247,24 +407,37 @@ class GameEngine:
         card.is_used = True
         card.applied_to_player_id = target_player_id
         
+        # Обновляем флаги
         if match.current_turn:
-            match.current_turn.card_applied = True
+            if manager_id == match.manager1_id:
+                match.current_turn.manager1_card_applied = True
+            else:
+                match.current_turn.manager2_card_applied = True
+            match.current_turn.card_applied = True  # Для обратной совместимости
         
         return match
     
-    def end_turn(self, match: Match, manager_id: UUID) -> Match:
-        """Завершить ход и передать другому игроку"""
-        if not match.is_manager_turn(manager_id):
-            raise ValueError("Сейчас не ваш ход")
+    def end_turn(self, match: Match) -> Match:
+        """
+        Завершить ход и перейти к следующему.
         
+        ИСПРАВЛЕНО: Вызывается после броска кубика, когда оба менеджера 
+        применили свои карточки (или отказались).
+        """
         if not match.current_turn:
             raise ValueError("Ход не начат")
         
-        # НОВОЕ: Помечаем игроков этого хода как использованных
-        turn_bets = match.get_turn_bets()
-        used_player_ids = set(b.player_id for b in turn_bets)
-        for player_id in used_player_ids:
-            match.mark_player_used(manager_id, player_id)
+        if not match.current_turn.dice_rolled:
+            raise ValueError("Кубик ещё не брошен")
+        
+        # Помечаем игроков этого хода как использованных
+        # Менеджер 1
+        if match.current_turn.manager1_player_id:
+            match.mark_player_used(match.manager1_id, match.current_turn.manager1_player_id)
+        
+        # Менеджер 2
+        if match.manager2_id and match.current_turn.manager2_player_id:
+            match.mark_player_used(match.manager2_id, match.current_turn.manager2_player_id)
         
         # Пересчитываем статистику команд
         if match.team1:
@@ -272,28 +445,25 @@ class GameEngine:
         if match.team2:
             match.team2.calculate_stats()
         
-        # Увеличиваем счётчик ходов
+        # Увеличиваем счётчик ходов (ОДИН ход = оба менеджера сделали ставки)
         if match.phase == MatchPhase.MAIN_TIME:
             match.total_turns_main += 1
         else:
             match.total_turns_extra += 1
         
         # Проверяем, закончился ли матч
-        # В основное время: 22 хода (11 каждый)
-        if match.phase == MatchPhase.MAIN_TIME and match.total_turns_main >= 22:
+        # В основное время: 11 ходов (оба ставят одновременно)
+        if match.phase == MatchPhase.MAIN_TIME and match.total_turns_main >= 11:
             return self._end_main_time(match)
         
-        # Дополнительное время: 10 ходов (5 каждый)
-        if match.phase == MatchPhase.EXTRA_TIME and match.total_turns_extra >= 10:
+        # Дополнительное время: 5 ходов
+        if match.phase == MatchPhase.EXTRA_TIME and match.total_turns_extra >= 5:
             return self._end_extra_time(match)
         
-        # Передаём ход сопернику
-        next_manager = match.get_opponent_id(manager_id)
-        if next_manager:
-            match.current_turn = TurnState(
-                turn_number=match.current_turn.turn_number + 1,
-                current_manager_id=next_manager
-            )
+        # Переходим к следующему ходу
+        match.current_turn = TurnState(
+            turn_number=match.current_turn.turn_number + 1
+        )
         
         return match
     
@@ -442,12 +612,34 @@ class GameEngine:
         """
         Получить список доступных игроков для ставки в текущем ходе.
         
-        Учитывает:
-        - Номер хода (ход 1 = только вратарь, ходы 2+ = все кроме вратаря)
-        - Использованных игроков в матче
-        - Доступность игрока (не удалён)
+        ИСПРАВЛЕНО: Теперь проверяет, что у игрока есть минимум 2 РАЗНЫХ типа ставок.
         """
-        return match.get_available_players_for_betting(manager_id)
+        team = match.get_team(manager_id)
+        if not team:
+            return []
+        
+        # Получаем базовый список доступных игроков
+        base_available = match.get_available_players_for_betting(manager_id)
+        
+        # Фильтруем: оставляем только тех, у кого есть минимум 2 типа ставок
+        turn_number = match.current_turn.turn_number if match.current_turn else 1
+        
+        final_available = []
+        for player in base_available:
+            # Вратарь на 1-м ходу — особый случай (1 ставка)
+            if turn_number == 1 and player.position == Position.GOALKEEPER:
+                available_types = self.bet_tracker.get_available_bet_types(match, manager_id, player)
+                if available_types:
+                    final_available.append(player)
+                continue
+            
+            # Полевые игроки — нужно минимум 2 типа
+            if player.position != Position.GOALKEEPER:
+                available_types = self.bet_tracker.get_available_bet_types(match, manager_id, player)
+                if len(available_types) >= 2:
+                    final_available.append(player)
+        
+        return final_available
     
     def can_player_bet(
         self,
@@ -470,3 +662,19 @@ class GameEngine:
             return False, "Игрок не найден"
         
         return self.bet_tracker.can_player_bet(match, manager_id, player)
+    
+    def check_deadlock_risk(
+        self,
+        match: Match,
+        manager_id: UUID,
+        proposed_player_id: UUID,
+        proposed_bet_types: List[BetType]
+    ) -> Tuple[bool, str]:
+        """
+        Проверить риск дедлока при выборе игрока.
+        
+        Применяется начиная с 5-го хода.
+        """
+        return self.bet_tracker.check_deadlock_risk(
+            match, manager_id, proposed_player_id, proposed_bet_types
+        )

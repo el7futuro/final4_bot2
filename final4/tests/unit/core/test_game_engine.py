@@ -180,37 +180,58 @@ class TestDiceRoll:
         """Бросок кубика определяет результаты ставок"""
         from src.core.models.bet import BetOutcome
         
+        manager2_id = uuid4()
+        
         match = engine.create_match(manager1_id, MatchType.VS_BOT)
         match.status = MatchStatus.IN_PROGRESS
+        match.manager2_id = manager2_id
         
-        # Создаём минимальную команду
-        gk = Player(name="Вратарь", position=Position.GOALKEEPER, number=1, is_on_field=True)
-        team = Team(manager_id=manager1_id, name="Test", players=[gk])
-        match.team1 = team
+        # Создаём минимальные команды
+        gk1 = Player(name="Вратарь 1", position=Position.GOALKEEPER, number=1, is_on_field=True)
+        gk2 = Player(name="Вратарь 2", position=Position.GOALKEEPER, number=1, is_on_field=True)
+        
+        team1 = Team(manager_id=manager1_id, name="Test1", players=[gk1])
+        team2 = Team(manager_id=manager2_id, name="Test2", players=[gk2])
+        
+        match.team1 = team1
+        match.team2 = team2
         
         from src.core.models.match import TurnState
-        match.current_turn = TurnState(turn_number=1, current_manager_id=manager1_id)
+        match.current_turn = TurnState(turn_number=1)
         
-        # Ставка на чётное
-        bet = Bet(
+        # Менеджер 1 делает ставку
+        bet1 = Bet(
             match_id=match.id,
             manager_id=manager1_id,
-            player_id=gk.id,
+            player_id=gk1.id,
             turn_number=1,
             bet_type=BetType.EVEN_ODD,
             even_odd_choice=EvenOddChoice.EVEN
         )
-        match.bets.append(bet)
-        match.current_turn.bets_placed.append(bet.id)
+        match, _ = engine.place_bet(match, manager1_id, gk1.id, bet1)
+        engine.confirm_bets(match, manager1_id)
         
-        # Бросаем кубик
-        match, dice_value, won_bets = engine.roll_dice(match, manager1_id)
+        # Менеджер 2 делает ставку
+        bet2 = Bet(
+            match_id=match.id,
+            manager_id=manager2_id,
+            player_id=gk2.id,
+            turn_number=1,
+            bet_type=BetType.EVEN_ODD,
+            even_odd_choice=EvenOddChoice.ODD
+        )
+        match, _ = engine.place_bet(match, manager2_id, gk2.id, bet2)
+        engine.confirm_bets(match, manager2_id)
+        
+        # Бросаем кубик (новый API без manager_id)
+        match, dice_value, won_bets = engine.roll_dice(match)
         
         assert dice_value >= 1 and dice_value <= 6
         assert match.current_turn.dice_rolled
         
-        # Проверяем, что ставка разрешена
-        assert bet.outcome in [BetOutcome.WON, BetOutcome.LOST]
+        # Проверяем, что ставки разрешены
+        assert bet1.outcome in [BetOutcome.WON, BetOutcome.LOST]
+        assert bet2.outcome in [BetOutcome.WON, BetOutcome.LOST]
 
 
 class TestScoreCalculation:

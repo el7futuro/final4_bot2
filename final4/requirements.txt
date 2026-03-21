@@ -1,0 +1,20 @@
+# Final 4 - Requirements
+# Python 3.11+
+
+# Core
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+
+# Database
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# Cache
+redis>=5.0.0
+
+# Telegram Bot
+aiogram>=3.3.0
+
+# Utilities
+orjson>=3.9.0

@@ -25,18 +25,23 @@ from src.core.models.bet import Bet, BetType, EvenOddChoice, HighLowChoice
 
 
 def create_team(manager_id, name: str) -> Team:
-    """Создать тестовую команду с 16 игроками"""
+    """
+    Создать команду с 16 игроками по правилам:
+    - 1 вратарь
+    - 5 защитников
+    - 6 полузащитников
+    - 4 форварда
+    """
     players = []
     number = 1
     
-    # 2 вратаря
-    for i in range(2):
-        players.append(Player(
-            name=f"Вратарь {i+1}",
-            position=Position.GOALKEEPER,
-            number=number
-        ))
-        number += 1
+    # 1 вратарь
+    players.append(Player(
+        name=f"Вратарь",
+        position=Position.GOALKEEPER,
+        number=number
+    ))
+    number += 1
     
     # 5 защитников
     for i in range(5):
@@ -47,8 +52,8 @@ def create_team(manager_id, name: str) -> Team:
         ))
         number += 1
     
-    # 5 полузащитников
-    for i in range(5):
+    # 6 полузащитников
+    for i in range(6):
         players.append(Player(
             name=f"Полузащитник {i+1}",
             position=Position.MIDFIELDER,

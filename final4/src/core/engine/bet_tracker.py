@@ -5,7 +5,7 @@ from uuid import UUID
 from typing import List, Dict, Set, Tuple
 from collections import defaultdict
 
-from ..models.match import Match
+from ..models.match import Match, MatchPhase
 from ..models.player import Player, Position
 from ..models.bet import Bet, BetType
 
@@ -37,15 +37,21 @@ class BetTracker:
         if not player.is_available:
             raise ValueError("Игрок недоступен (удалён)")
         
-        # 2. Проверка по номеру хода
-        if turn_number == 1:
-            # Первый ход — только вратарь
-            if player.position != Position.GOALKEEPER:
-                raise ValueError("На первом ходу доступен только вратарь")
+        # 2. Проверка по номеру хода (зависит от фазы матча)
+        if match.phase == MatchPhase.MAIN_TIME:
+            # ОСНОВНОЕ ВРЕМЯ
+            if turn_number == 1:
+                # Первый ход — только вратарь
+                if player.position != Position.GOALKEEPER:
+                    raise ValueError("На первом ходу доступен только вратарь")
+            else:
+                # Ходы 2+ — все кроме вратаря
+                if player.position == Position.GOALKEEPER:
+                    raise ValueError("Вратарь доступен только на первом ходу")
         else:
-            # Ходы 2+ — все кроме вратаря
+            # ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ — только полевые (вратарь уже использован)
             if player.position == Position.GOALKEEPER:
-                raise ValueError("Вратарь доступен только на первом ходу")
+                raise ValueError("Вратарь недоступен в дополнительное время")
         
         # 3. Проверка, использован ли игрок в этом матче
         if match.is_player_used(manager_id, player.id):
@@ -142,14 +148,21 @@ class BetTracker:
         """
         Валидировать ставку на гол.
         
-        ИСПРАВЛЕНО:
+        ОСНОВНОЕ ВРЕМЯ:
         - DF: максимум 1 ИГРОК с голевой ставкой
         - MF: максимум 3 СТАВКИ на гол суммарно
         - FW: максимум 4 СТАВКИ на гол суммарно
+        
+        ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ:
+        - Ставка на гол возможна для КАЖДОГО игрока!
         """
         # Вратарь не может иметь ставку на гол
         if player.position == Position.GOALKEEPER:
             raise ValueError("Вратарь не может делать ставку на гол")
+        
+        # В ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ лимиты не действуют — ставка на гол для каждого!
+        if match.phase != MatchPhase.MAIN_TIME:
+            return  # Без ограничений
         
         # Подсчёт голевых ставок
         goal_bet_counts: Dict[Position, int] = defaultdict(int)
@@ -239,13 +252,19 @@ class BetTracker:
         
         turn_number = match.current_turn.turn_number if match.current_turn else 1
         
-        # Правило по номеру хода
-        if turn_number == 1:
-            if player.position != Position.GOALKEEPER:
-                return False, "На первом ходу доступен только вратарь"
+        # Правило по номеру хода ЗАВИСИТ от фазы
+        if match.phase == MatchPhase.MAIN_TIME:
+            # ОСНОВНОЕ ВРЕМЯ
+            if turn_number == 1:
+                if player.position != Position.GOALKEEPER:
+                    return False, "На первом ходу доступен только вратарь"
+            else:
+                if player.position == Position.GOALKEEPER:
+                    return False, "Вратарь доступен только на первом ходу"
         else:
+            # ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ — только полевые
             if player.position == Position.GOALKEEPER:
-                return False, "Вратарь доступен только на первом ходу"
+                return False, "Вратарь недоступен в дополнительное время"
         
         # Проверка использованности
         if match.is_player_used(manager_id, player.id):
@@ -258,7 +277,7 @@ class BetTracker:
             if gk_bets:
                 return False, "Вратарь уже сделал ставку"
         
-        # НОВОЕ: Для полевых игроков — проверяем наличие минимум 2 РАЗНЫХ типов ставок
+        # Для полевых игроков — проверяем наличие минимум 2 РАЗНЫХ типов ставок
         if player.position != Position.GOALKEEPER:
             available_types = self.get_available_bet_types(match, manager_id, player)
             if len(available_types) < 2:

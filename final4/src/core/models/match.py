@@ -225,9 +225,14 @@ class Match(BaseModel):
         
         Правила:
         - ВСЕ 16 игроков заявки доступны (не только 11 на поле!)
+        
+        ОСНОВНОЕ ВРЕМЯ:
         - Ход 1: только вратарь
-        - Ходы 2+: все кроме вратаря
-        - Игрок уже использован в матче: недоступен
+        - Ходы 2-11: все кроме вратаря
+        
+        ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ:
+        - Все 5 ходов: только полевые (запасные), вратарь уже использован!
+        - Ставка на гол возможна для каждого игрока
         """
         team = self.get_team(manager_id)
         if not team:
@@ -237,7 +242,6 @@ class Match(BaseModel):
         used_players = self.get_used_players(manager_id)
         
         available = []
-        # Используем ВСЮ команду (16 игроков), а не только field_players
         for player in team.players:
             # Игрок не доступен (удалён)
             if not player.is_available:
@@ -247,13 +251,19 @@ class Match(BaseModel):
             if player.id in used_players:
                 continue
             
-            # Правило по номеру хода
-            if turn_number == 1:
-                # Первый ход — только вратарь
-                if player.position != Position.GOALKEEPER:
-                    continue
+            # Правило по номеру хода зависит от фазы
+            if self.phase == MatchPhase.MAIN_TIME:
+                # ОСНОВНОЕ ВРЕМЯ
+                if turn_number == 1:
+                    # Первый ход — только вратарь
+                    if player.position != Position.GOALKEEPER:
+                        continue
+                else:
+                    # Ходы 2+ — все кроме вратаря
+                    if player.position == Position.GOALKEEPER:
+                        continue
             else:
-                # Ходы 2+ — все кроме вратаря
+                # ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ — только полевые (вратарь уже использован)
                 if player.position == Position.GOALKEEPER:
                     continue
             

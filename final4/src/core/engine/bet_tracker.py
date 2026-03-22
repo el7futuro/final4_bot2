@@ -88,12 +88,25 @@ class BetTracker:
         if player_bets_this_turn >= max_bets_per_turn:
             raise ValueError(f"Максимум {max_bets_per_turn} ставок на этого игрока за ход")
         
-        # 8. НОВОЕ: 2 ставки должны быть РАЗНЫХ типов (для полевых игроков)
+        # 8. Проверка типов ставок (зависит от фазы)
         if player.position != Position.GOALKEEPER and player_bets_this_turn == 1:
-            # Это вторая ставка — проверяем, что тип отличается от первой
+            # Это вторая ставка
             existing_bet_type = self._get_player_bet_type_this_turn(match, manager_id, player.id)
-            if existing_bet_type and existing_bet_type == bet.bet_type:
-                raise ValueError(f"Две ставки должны быть РАЗНЫХ типов (уже есть {existing_bet_type.value})")
+            
+            if match.phase == MatchPhase.EXTRA_TIME:
+                # ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ: одна ставка ОБЯЗАТЕЛЬНО на гол
+                first_is_goal = existing_bet_type == BetType.EXACT_NUMBER
+                second_is_goal = bet.bet_type == BetType.EXACT_NUMBER
+                
+                if not first_is_goal and not second_is_goal:
+                    raise ValueError("В дополнительное время одна ставка ОБЯЗАТЕЛЬНО на гол (точное число)")
+                
+                if first_is_goal and second_is_goal:
+                    raise ValueError("В дополнительное время только ОДНА ставка на гол, вторая — чёт/нечёт или больше/меньше")
+            else:
+                # ОСНОВНОЕ ВРЕМЯ: просто разные типы
+                if existing_bet_type and existing_bet_type == bet.bet_type:
+                    raise ValueError(f"Две ставки должны быть РАЗНЫХ типов (уже есть {existing_bet_type.value})")
     
     def _count_even_odd_bets(self, match: Match, manager_id: UUID) -> int:
         """Подсчитать количество ставок на чёт/нечёт"""
@@ -199,22 +212,46 @@ class BetTracker:
         manager_id: UUID,
         player: Player
     ) -> List[BetType]:
-        """Получить доступные типы ставок для игрока"""
+        """
+        Получить доступные типы ставок для игрока.
+        
+        ОСНОВНОЕ ВРЕМЯ:
+        - 2 разных типа из доступных
+        
+        ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ:
+        - Обязательно: 1 ставка на гол + 1 ставка чёт/нечёт или больше/меньше
+        """
         available = []
         
         # Вратарь — только чёт/нечёт (и только 1 раз за матч)
         if player.position == Position.GOALKEEPER:
-            # Проверяем, не ставил ли уже вратарь
             gk_bets = [b for b in match.bets 
                        if b.manager_id == manager_id and b.player_id == player.id]
             if gk_bets:
-                return []  # Вратарь уже ставил
+                return []
             
             even_odd_count = self._count_even_odd_bets(match, manager_id)
             if even_odd_count < 6:
                 available.append(BetType.EVEN_ODD)
             return available
         
+        # ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ — особые правила
+        if match.phase == MatchPhase.EXTRA_TIME:
+            # Точное число (гол) — всегда доступно в Extra Time
+            available.append(BetType.EXACT_NUMBER)
+            
+            # Чёт/нечёт — для всех кроме форвардов
+            if player.position != Position.FORWARD:
+                even_odd_count = self._count_even_odd_bets(match, manager_id)
+                if even_odd_count < 6:
+                    available.append(BetType.EVEN_ODD)
+            
+            # Больше/меньше — всегда
+            available.append(BetType.HIGH_LOW)
+            
+            return available
+        
+        # ОСНОВНОЕ ВРЕМЯ — стандартные правила
         # Чёт/нечёт — для всех кроме форвардов
         if player.position != Position.FORWARD:
             even_odd_count = self._count_even_odd_bets(match, manager_id)

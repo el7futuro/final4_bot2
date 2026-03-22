@@ -128,7 +128,7 @@ class Keyboards:
         can_draw_card: bool = False,
         can_end_turn: bool = False
     ) -> InlineKeyboardMarkup:
-        """Действия в игре"""
+        """Действия в игре (legacy)"""
         builder = InlineKeyboardBuilder()
         
         if can_bet:
@@ -160,6 +160,65 @@ class Keyboards:
             callback_data="match_stats"
         ))
         
+        return builder.as_markup()
+    
+    @staticmethod
+    def game_actions_simultaneous(
+        bets_count: int = 0,
+        required_bets: int = 2,
+        is_confirmed: bool = False,
+        both_ready: bool = False,
+        dice_rolled: bool = False
+    ) -> InlineKeyboardMarkup:
+        """Действия в игре (одновременные ставки)"""
+        builder = InlineKeyboardBuilder()
+        
+        if not dice_rolled:
+            if not is_confirmed:
+                # Ещё не подтвердил ставки
+                if bets_count < required_bets:
+                    builder.row(InlineKeyboardButton(
+                        text=f"🎯 Сделать ставку ({bets_count}/{required_bets})",
+                        callback_data="make_bet"
+                    ))
+                
+                if bets_count >= required_bets:
+                    builder.row(InlineKeyboardButton(
+                        text="✅ Подтвердить ставки",
+                        callback_data="confirm_bets"
+                    ))
+            else:
+                # Ставки подтверждены, ждём соперника
+                builder.row(InlineKeyboardButton(
+                    text="⏳ Ожидание соперника...",
+                    callback_data="waiting"
+                ))
+        else:
+            # После броска кубика
+            builder.row(InlineKeyboardButton(
+                text="➡️ Завершить ход",
+                callback_data="end_turn"
+            ))
+        
+        builder.row(InlineKeyboardButton(
+            text="📊 Статистика",
+            callback_data="match_stats"
+        ))
+        
+        return builder.as_markup()
+    
+    @staticmethod
+    def game_actions_after_roll() -> InlineKeyboardMarkup:
+        """Действия после броска кубика"""
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(
+            text="➡️ Следующий ход",
+            callback_data="end_turn"
+        ))
+        builder.row(InlineKeyboardButton(
+            text="📊 Статистика",
+            callback_data="match_stats"
+        ))
         return builder.as_markup()
     
     @staticmethod

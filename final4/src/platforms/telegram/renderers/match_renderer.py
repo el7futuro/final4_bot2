@@ -179,7 +179,7 @@ class MatchRenderer:
     
     @staticmethod
     def render_turn_info(match: Match, viewer_id) -> str:
-        """Отрендерить информацию о текущем ходе"""
+        """Отрендерить информацию о текущем ходе (legacy)"""
         if not match.current_turn:
             return ""
         
@@ -203,3 +203,108 @@ class MatchRenderer:
             lines.append("⏳ <b>Ход соперника</b>")
         
         return "\n".join(lines)
+    
+    @staticmethod
+    def render_turn_info_simultaneous(match: Match, viewer_id) -> str:
+        """Отрендерить информацию о ходе (одновременные ставки)"""
+        if not match.current_turn:
+            return ""
+        
+        turn = match.current_turn
+        is_m1 = match.manager1_id == viewer_id
+        
+        lines = [f"🔄 <b>Ход {turn.turn_number}</b>"]
+        
+        # Требуемое количество ставок
+        required = turn.get_required_bets_count()
+        
+        # Статус своих ставок
+        if is_m1:
+            my_bets = len(turn.manager1_bets)
+            my_ready = turn.manager1_ready
+            opp_ready = turn.manager2_ready
+        else:
+            my_bets = len(turn.manager2_bets)
+            my_ready = turn.manager2_ready
+            opp_ready = turn.manager1_ready
+        
+        if not turn.dice_rolled:
+            if not my_ready:
+                lines.append(f"📝 Ваши ставки: {my_bets}/{required}")
+                if my_bets < required:
+                    lines.append("👉 <i>Сделайте ставки и подтвердите</i>")
+                else:
+                    lines.append("👉 <i>Подтвердите ставки</i>")
+            else:
+                lines.append("✅ Ваши ставки подтверждены")
+                if not opp_ready:
+                    lines.append("⏳ Ожидаем соперника...")
+        else:
+            lines.append("🎲 Кубик брошен!")
+        
+        return "\n".join(lines)
+    
+    @staticmethod
+    def render_dice_result_simultaneous(
+        dice_value: int,
+        won_bets_by_manager: dict,
+        match: Match,
+        viewer_id
+    ) -> str:
+        """Отрендерить результат броска для обоих игроков"""
+        dice_emoji = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+        
+        lines = [
+            f"🎲 Выпало: <b>{dice_emoji[dice_value]} {dice_value}</b>",
+            "",
+        ]
+        
+        # Результаты для пользователя
+        is_m1 = match.manager1_id == viewer_id
+        my_won = won_bets_by_manager.get(viewer_id, [])
+        
+        if my_won:
+            lines.append(f"✅ <b>Вы выиграли {len(my_won)} ставок!</b>")
+            for bet in my_won:
+                lines.append(f"  • {bet.get_display_value()}")
+        else:
+            lines.append("❌ Вы не выиграли ставки")
+        
+        # Результаты соперника
+        opp_id = match.manager2_id if is_m1 else match.manager1_id
+        opp_won = won_bets_by_manager.get(opp_id, [])
+        
+        lines.append("")
+        if opp_won:
+            lines.append(f"🔴 Соперник выиграл {len(opp_won)} ставок")
+        else:
+            lines.append("🔴 Соперник не выиграл ставки")
+        
+        return "\n".join(lines)
+    
+    @staticmethod
+    def render_cards_drawn(match: Match, viewer_id) -> str:
+        """Отрендерить вытянутые карточки"""
+        if not match.current_turn:
+            return ""
+        
+        turn = match.current_turn
+        is_m1 = match.manager1_id == viewer_id
+        
+        lines = []
+        
+        # Моя карточка
+        my_card_id = turn.manager1_card_id if is_m1 else turn.manager2_card_id
+        if my_card_id:
+            card = next((c for c in match.whistle_cards_drawn if c.id == my_card_id), None)
+            if card:
+                lines.append(f"🃏 Ваша карточка: <b>{card.get_display_name()}</b>")
+        
+        # Карточка соперника
+        opp_card_id = turn.manager2_card_id if is_m1 else turn.manager1_card_id
+        if opp_card_id:
+            card = next((c for c in match.whistle_cards_drawn if c.id == opp_card_id), None)
+            if card:
+                lines.append(f"🔴 Карточка соперника: <b>{card.get_display_name()}</b>")
+        
+        return "\n".join(lines) if lines else ""

@@ -122,7 +122,12 @@ cd /app/final4 && python scripts/simulate_match.py
    - Запись карточек в историю ✅
 
 ### P1 (Важно)
-3. Telegram адаптер в `src/platforms/telegram/`
+3. ✅ ~~Telegram адаптер~~ — ЗАВЕРШЕНО (MVP)
+   - In-memory хранилище (без PostgreSQL/Redis)
+   - Полный игровой цикл
+   - Игра против бота
+   - Одновременные ставки
+   - Карточки Свисток
 4. PostgreSQL миграции (Alembic)
 
 ### P2 (Можно позже)

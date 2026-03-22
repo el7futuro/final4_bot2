@@ -55,24 +55,18 @@ class ScoreCalculator:
         Рассчитать забитые голы для одной команды.
         
         Формула по правилам:
-        1. remaining_saves = opponent_saves - own_passes (передачи пробивают отбития)
-        2. Если remaining_saves <= 0:
-           - breakthrough_passes = abs(remaining_saves)
-           - extra_goals = breakthrough_passes // 2 (оставшиеся передачи конвертируются)
-           - total = own_goals + extra_goals
-        3. Если remaining_saves > 0:
-           - goals_blocked = (remaining_saves + 1) // 2 (2 отбития гасят 1 гол)
-           - total = max(0, own_goals - goals_blocked)
+        1. Передачи пробивают отбития (1:1)
+        2. Если передачи >= отбития → все голы засчитываются
+        3. Если отбития > передачи → оставшиеся отбития гасят голы (2 отб = 1 гол)
+        
+        Лишние передачи НЕ конвертируются в голы!
         """
         # Передачи пробивают отбития
         remaining_saves = opponent_saves - own_passes
         
         if remaining_saves <= 0:
-            # Оборона взломана
-            # Лишние передачи конвертируются в голы (2 передачи = 1 гол)
-            breakthrough_passes = abs(remaining_saves)
-            extra_goals = breakthrough_passes // 2
-            return own_goals + extra_goals
+            # Оборона пробита — все голы засчитываются
+            return own_goals
         else:
             # Оборона устояла частично
             # Оставшиеся отбития гасят голы (2 отбития = 1 гол)
@@ -87,32 +81,25 @@ class ScoreCalculator:
     ) -> str:
         """
         Получить объяснение расчёта счёта.
-        
-        Returns:
-            Текстовое объяснение
         """
         remaining_saves = opponent_saves - own_passes
         
         lines = [
             f"Ваши передачи: {own_passes}",
             f"Отбития соперника: {opponent_saves}",
-            f"После пробития: {remaining_saves} отбитий",
         ]
         
         if remaining_saves <= 0:
-            breakthrough = abs(remaining_saves)
-            extra = breakthrough // 2
-            total = own_goals + extra
             lines.extend([
-                f"Пробились лишние передачи: {breakthrough}",
-                f"Дополнительные голы: {breakthrough} // 2 = {extra}",
+                f"Передачи пробили все отбития!",
                 f"Ваши голы: {own_goals}",
-                f"ИТОГО забито: {own_goals} + {extra} = {total}",
+                f"ИТОГО забито: {own_goals}",
             ])
         else:
             blocked = (remaining_saves + 1) // 2
             total = max(0, own_goals - blocked)
             lines.extend([
+                f"Остаток отбитий: {remaining_saves}",
                 f"Отбития гасят голы: ({remaining_saves} + 1) // 2 = {blocked}",
                 f"Ваши голы: {own_goals}",
                 f"ИТОГО забито: max(0, {own_goals} - {blocked}) = {total}",

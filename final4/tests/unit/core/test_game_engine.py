@@ -238,21 +238,20 @@ class TestScoreCalculation:
     """Тесты подсчёта счёта"""
     
     def test_goals_scored_without_defense(self):
-        """Голы + лишние передачи засчитываются без обороны"""
+        """Голы засчитываются когда нет обороны"""
         from src.core.engine.score_calculator import ScoreCalculator
         
         calc = ScoreCalculator()
         
         # Команда 1: 3 передачи, 2 гола vs Команда 2: 0 отбитий
-        # remaining_saves = 0 - 3 = -3 (лишние передачи)
-        # extra_goals = 3 // 2 = 1
-        # total = 2 + 1 = 3
+        # remaining_saves = 0 - 3 = -3 (оборона пробита)
+        # Все голы засчитываются = 2
         goals = calc._calculate_goals_scored(
             own_passes=3,
             own_goals=2,
             opponent_saves=0
         )
-        assert goals == 3  # 2 гола + 1 от лишних передач
+        assert goals == 2  # Лишние передачи НЕ конвертируются в голы
     
     def test_passes_break_through_saves(self):
         """Передачи пробивают отбития"""

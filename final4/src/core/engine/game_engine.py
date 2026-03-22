@@ -79,7 +79,7 @@ class GameEngine:
         formation: Formation,
         player_ids: List[UUID]
     ) -> Match:
-        """Установить состав команды"""
+        """Установить состав команды (legacy - с формацией)"""
         if match.status != MatchStatus.SETTING_LINEUP:
             raise ValueError("Нельзя менять состав в текущем статусе")
         
@@ -94,6 +94,42 @@ class GameEngine:
             match.team1 = team
         else:
             match.team2 = team
+        
+        # Проверяем, оба ли готовы
+        if match.team1 and match.team2:
+            match = self._start_match(match)
+        
+        return match
+    
+    def set_team_without_formation(
+        self,
+        match: Match,
+        manager_id: UUID,
+        team: Team
+    ) -> Match:
+        """
+        Установить команду БЕЗ формации (динамическая формация).
+        
+        Формация проверяется только в конце матча (ход 11).
+        Все 16 игроков доступны для выбора на каждом ходе.
+        """
+        if match.status not in [MatchStatus.WAITING_FOR_OPPONENT, MatchStatus.SETTING_LINEUP]:
+            raise ValueError("Нельзя менять состав в текущем статусе")
+        
+        if not match.is_participant(manager_id):
+            raise ValueError("Вы не участник этого матча")
+        
+        # Устанавливаем команду без выбора состава
+        # Все 16 игроков будут доступны
+        if manager_id == match.manager1_id:
+            match.team1 = team
+        else:
+            match.team2 = team
+        
+        # Обновляем статус если второй игрок присоединился
+        if match.status == MatchStatus.WAITING_FOR_OPPONENT and manager_id != match.manager1_id:
+            match.manager2_id = manager_id
+            match.status = MatchStatus.SETTING_LINEUP
         
         # Проверяем, оба ли готовы
         if match.team1 and match.team2:

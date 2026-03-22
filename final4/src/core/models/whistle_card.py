@@ -51,20 +51,28 @@ class CardTarget(str, Enum):
 
 
 # Карточки и их цели
+# ИСПРАВЛЕНО: По правилам игры
 CARD_TARGETS = {
-    CardType.HAT_TRICK: CardTarget.SELF_PLAYER,
-    CardType.DOUBLE: CardTarget.SELF_PLAYER,
-    CardType.GOAL: CardTarget.SELF_PLAYER,
-    CardType.OWN_GOAL: CardTarget.OPPONENT_TEAM,
-    CardType.VAR: CardTarget.OPPONENT_TEAM,
-    CardType.OFFSIDE: CardTarget.OPPONENT_PLAYER,
-    CardType.PENALTY: CardTarget.SELF_PLAYER,
-    CardType.RED_CARD: CardTarget.OPPONENT_PLAYER,
-    CardType.YELLOW_CARD: CardTarget.OPPONENT_PLAYER,
-    CardType.FOUL: CardTarget.OPPONENT_PLAYER,
-    CardType.LOSS: CardTarget.OPPONENT_PLAYER,
-    CardType.INTERCEPTION: CardTarget.SELF_PLAYER,
-    CardType.TACKLE: CardTarget.SELF_PLAYER,
+    # Позитивные для СВОЕГО игрока текущего хода
+    CardType.HAT_TRICK: CardTarget.SELF_PLAYER,      # +3 гола своему
+    CardType.DOUBLE: CardTarget.SELF_PLAYER,         # +2 гола своему
+    CardType.GOAL: CardTarget.SELF_PLAYER,           # +1 гол своему
+    CardType.INTERCEPTION: CardTarget.SELF_PLAYER,   # +1 передача своему
+    CardType.TACKLE: CardTarget.SELF_PLAYER,         # +1 отбитие своему
+    
+    # Негативные для СВОЕГО игрока текущего хода
+    CardType.FOUL: CardTarget.SELF_PLAYER,           # -1 отбитие своему
+    CardType.LOSS: CardTarget.SELF_PLAYER,           # -1 передача своему
+    
+    # Действуют на СОПЕРНИКА текущего хода
+    CardType.OWN_GOAL: CardTarget.OPPONENT_PLAYER,   # +1 гол игроку соперника
+    CardType.OFFSIDE: CardTarget.OPPONENT_PLAYER,    # отменяет гол соперника
+    CardType.VAR: CardTarget.OPPONENT_TEAM,          # отменяет карточку соперника
+    CardType.RED_CARD: CardTarget.OPPONENT_PLAYER,   # удаление игрока соперника
+    CardType.YELLOW_CARD: CardTarget.OPPONENT_PLAYER, # -1 действие у соперника
+    
+    # Особые
+    CardType.PENALTY: CardTarget.SELF_PLAYER,        # розыгрыш пенальти
 }
 
 

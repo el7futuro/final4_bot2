@@ -678,3 +678,209 @@ class GameEngine:
         return self.bet_tracker.check_deadlock_risk(
             match, manager_id, proposed_player_id, proposed_bet_types
         )
+    
+    # ==================== СЕРИЯ ПЕНАЛЬТИ ====================
+    
+    def start_penalty_shootout(self, match: Match) -> Match:
+        """
+        Начать серию пенальти после ничьей в дополнительное время.
+        
+        Правила:
+        - 5 ударов от каждого менеджера
+        - Удар = ставка на больше/меньше
+        - Угадал = гол
+        - Не угадал = отбитие сопернику
+        - Если после 5 ударов ничья — до первого промаха
+        """
+        if match.phase != MatchPhase.EXTRA_TIME:
+            raise ValueError("Пенальти возможны только после дополнительного времени")
+        
+        match.phase = MatchPhase.PENALTIES
+        match.status = MatchStatus.PENALTIES
+        match.current_turn = TurnState(turn_number=1)
+        
+        return match
+    
+    def take_penalty(
+        self,
+        match: Match,
+        manager_id: UUID,
+        high_or_low: str  # "high" (4-6) или "low" (1-3)
+    ) -> Tuple[Match, int, bool, Optional[UUID]]:
+        """
+        Выполнить удар с пенальти.
+        
+        Args:
+            match: Матч
+            manager_id: ID бьющего менеджера
+            high_or_low: "high" (4-6) или "low" (1-3)
+        
+        Returns:
+            (match, dice_value, scored, opponent_save_player_id)
+            - scored: True если гол, False если промах
+            - opponent_save_player_id: ID игрока соперника, который получает отбитие при промахе
+        """
+        if match.phase != MatchPhase.PENALTIES:
+            raise ValueError("Матч не в фазе пенальти")
+        
+        if not match.is_participant(manager_id):
+            raise ValueError("Вы не участник этого матча")
+        
+        # Бросок кубика
+        dice_value = random.randint(1, 6)
+        
+        # Проверяем угадал ли
+        if high_or_low == "high":
+            scored = dice_value >= 4
+        else:  # low
+            scored = dice_value <= 3
+        
+        # Обновляем счёт пенальти
+        if scored:
+            if manager_id == match.manager1_id:
+                match.score.manager1_goals += 1
+            else:
+                match.score.manager2_goals += 1
+            opponent_save_player_id = None
+        else:
+            # Соперник получает отбитие — нужно выбрать игрока
+            opponent_id = match.get_opponent_id(manager_id)
+            opponent_team = match.get_opponent_team(manager_id)
+            opponent_save_player_id = None
+            
+            # Автоматически даём отбитие вратарю или первому доступному
+            if opponent_team:
+                gk = opponent_team.get_goalkeeper()
+                if gk:
+                    gk.add_saves(1)
+                    opponent_save_player_id = gk.id
+        
+        # Увеличиваем счётчик ударов
+        if match.current_turn:
+            match.current_turn.turn_number += 1
+        
+        return match, dice_value, scored, opponent_save_player_id
+    
+    def check_penalty_winner(self, match: Match) -> Optional[UUID]:
+        """
+        Проверить, определился ли победитель в серии пенальти.
+        
+        Returns:
+            ID победителя или None если серия продолжается
+        """
+        if match.phase != MatchPhase.PENALTIES:
+            return None
+        
+        turn = match.current_turn.turn_number if match.current_turn else 1
+        
+        goals1 = match.score.manager1_goals
+        goals2 = match.score.manager2_goals
+        
+        # Основная серия (10 ударов = 5 от каждого)
+        if turn <= 10:
+            # Проверяем, можно ли определить победителя досрочно
+            remaining_kicks_m1 = max(0, 5 - (turn // 2 + turn % 2))  # Оставшиеся удары м1
+            remaining_kicks_m2 = max(0, 5 - turn // 2)  # Оставшиеся удары м2
+            
+            # М1 выиграл досрочно
+            if goals1 > goals2 + remaining_kicks_m2:
+                return match.manager1_id
+            
+            # М2 выиграл досрочно
+            if goals2 > goals1 + remaining_kicks_m1:
+                return match.manager2_id
+            
+            # После 10 ударов
+            if turn > 10:
+                if goals1 > goals2:
+                    return match.manager1_id
+                elif goals2 > goals1:
+                    return match.manager2_id
+                # Иначе — продолжаем до первого промаха
+        
+        else:
+            # Серия до первого промаха (после основных 10 ударов)
+            # Каждые 2 удара (по одному от каждого) проверяем
+            if turn % 2 == 0:  # Оба пробили
+                if goals1 > goals2:
+                    return match.manager1_id
+                elif goals2 > goals1:
+                    return match.manager2_id
+        
+        return None
+    
+    def finish_penalty_shootout(self, match: Match, winner_id: UUID) -> Match:
+        """Завершить серию пенальти"""
+        match.status = MatchStatus.FINISHED
+        match.finished_at = datetime.utcnow()
+        
+        loser_id = match.get_opponent_id(winner_id)
+        
+        match.result = MatchResult(
+            winner_id=winner_id,
+            loser_id=loser_id,
+            final_score=match.score,
+            decided_by=MatchPhase.PENALTIES
+        )
+        
+        return match
+    
+    # ==================== РОЗЫГРЫШ ПЕНАЛЬТИ (карточка) ====================
+    
+    def resolve_penalty_card(
+        self,
+        match: Match,
+        manager_id: UUID,
+        high_or_low: str  # "high" или "low"
+    ) -> Tuple[Match, int, bool]:
+        """
+        Разыграть карточку Пенальти.
+        
+        По правилам:
+        - Менеджер ставит на больше (4-6) или меньше (1-3)
+        - Если угадал → его игрок текущего хода получает ГОЛ
+        - Если не угадал → игрок СОПЕРНИКА текущего хода получает ОТБИТИЕ
+        
+        Returns:
+            (match, dice_value, scored)
+        """
+        if not match.current_turn:
+            raise ValueError("Ход не начат")
+        
+        # Бросок кубика
+        dice_value = random.randint(1, 6)
+        
+        # Проверяем
+        if high_or_low == "high":
+            scored = dice_value >= 4
+        else:
+            scored = dice_value <= 3
+        
+        # Находим игроков текущего хода
+        if manager_id == match.manager1_id:
+            own_player_id = match.current_turn.manager1_player_id
+            opponent_player_id = match.current_turn.manager2_player_id
+        else:
+            own_player_id = match.current_turn.manager2_player_id
+            opponent_player_id = match.current_turn.manager1_player_id
+        
+        if scored:
+            # Свой игрок получает гол
+            if own_player_id:
+                team = match.get_team(manager_id)
+                if team:
+                    player = team.get_player_by_id(own_player_id)
+                    if player:
+                        player.add_goals(1)
+        else:
+            # Игрок соперника получает отбитие
+            if opponent_player_id:
+                opponent_id = match.get_opponent_id(manager_id)
+                if opponent_id:
+                    opponent_team = match.get_opponent_team(manager_id)
+                    if opponent_team:
+                        player = opponent_team.get_player_by_id(opponent_player_id)
+                        if player:
+                            player.add_saves(1)
+        
+        return match, dice_value, scored

@@ -12,11 +12,11 @@ class ScoreCalculator:
         """
         Рассчитать итоговый счёт.
         
-        Алгоритм:
-        1. Берём отбития соперника, вычитаем свои передачи
-        2. Если передач >= отбитий — все голы засчитываются
-        3. Если отбитий больше — голы тратятся на уничтожение отбитий (1 гол = 2 отбития)
-        4. Оставшиеся голы засчитываются
+        Алгоритм по правилам:
+        1. Передачи атакующего пробивают отбития защитника
+        2. Оставшиеся передачи / 2 = дополнительные голы (округление вниз)
+        3. Голы атакующего засчитываются напрямую
+        4. Если у защитника остались отбития — они гасят голы (2 отб = 1 гол)
         
         Args:
             team1: Команда менеджера 1
@@ -54,27 +54,30 @@ class ScoreCalculator:
         """
         Рассчитать забитые голы для одной команды.
         
-        Формула:
-        - remaining_saves = opponent_saves - own_passes
-        - Если remaining_saves <= 0: все голы засчитываются
-        - Иначе: goals_needed = ceil(remaining_saves / 2)
-        - scored = max(0, own_goals - goals_needed)
+        Формула по правилам:
+        1. remaining_saves = opponent_saves - own_passes (передачи пробивают отбития)
+        2. Если remaining_saves <= 0:
+           - breakthrough_passes = abs(remaining_saves)
+           - extra_goals = breakthrough_passes // 2 (оставшиеся передачи конвертируются)
+           - total = own_goals + extra_goals
+        3. Если remaining_saves > 0:
+           - goals_blocked = (remaining_saves + 1) // 2 (2 отбития гасят 1 гол)
+           - total = max(0, own_goals - goals_blocked)
         """
-        # Остаточные отбития после применения передач
+        # Передачи пробивают отбития
         remaining_saves = opponent_saves - own_passes
         
         if remaining_saves <= 0:
-            # Оборона полностью взломана, все голы засчитываются
-            return own_goals
-        
-        # Голы тратятся на уничтожение отбитий: 1 гол = 2 отбития
-        # Округление вверх: (remaining_saves + 1) // 2
-        goals_needed_to_clear = (remaining_saves + 1) // 2
-        
-        # Оставшиеся голы после уничтожения отбитий
-        scored_goals = max(0, own_goals - goals_needed_to_clear)
-        
-        return scored_goals
+            # Оборона взломана
+            # Лишние передачи конвертируются в голы (2 передачи = 1 гол)
+            breakthrough_passes = abs(remaining_saves)
+            extra_goals = breakthrough_passes // 2
+            return own_goals + extra_goals
+        else:
+            # Оборона устояла частично
+            # Оставшиеся отбития гасят голы (2 отбития = 1 гол)
+            goals_blocked = (remaining_saves + 1) // 2
+            return max(0, own_goals - goals_blocked)
     
     def get_score_explanation(
         self,
@@ -90,20 +93,29 @@ class ScoreCalculator:
         """
         remaining_saves = opponent_saves - own_passes
         
+        lines = [
+            f"Ваши передачи: {own_passes}",
+            f"Отбития соперника: {opponent_saves}",
+            f"После пробития: {remaining_saves} отбитий",
+        ]
+        
         if remaining_saves <= 0:
-            return (
-                f"Передачи ({own_passes}) >= Отбития соперника ({opponent_saves})\n"
-                f"Оборона взломана! Все {own_goals} голов засчитаны."
-            )
+            breakthrough = abs(remaining_saves)
+            extra = breakthrough // 2
+            total = own_goals + extra
+            lines.extend([
+                f"Пробились лишние передачи: {breakthrough}",
+                f"Дополнительные голы: {breakthrough} // 2 = {extra}",
+                f"Ваши голы: {own_goals}",
+                f"ИТОГО забито: {own_goals} + {extra} = {total}",
+            ])
+        else:
+            blocked = (remaining_saves + 1) // 2
+            total = max(0, own_goals - blocked)
+            lines.extend([
+                f"Отбития гасят голы: ({remaining_saves} + 1) // 2 = {blocked}",
+                f"Ваши голы: {own_goals}",
+                f"ИТОГО забито: max(0, {own_goals} - {blocked}) = {total}",
+            ])
         
-        goals_needed = (remaining_saves + 1) // 2
-        scored = max(0, own_goals - goals_needed)
-        
-        return (
-            f"Отбития соперника: {opponent_saves}\n"
-            f"Ваши передачи: -{own_passes}\n"
-            f"Остаток отбитий: {remaining_saves}\n"
-            f"Голов на пробитие: {goals_needed} (1 гол = 2 отб.)\n"
-            f"Ваши голы: {own_goals}\n"
-            f"Забито: {scored}"
-        )
+        return "\n".join(lines)

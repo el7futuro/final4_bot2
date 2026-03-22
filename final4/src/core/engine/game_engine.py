@@ -14,6 +14,7 @@ from ..models.team import Team, Formation
 from ..models.player import Player, Position
 from ..models.bet import Bet, BetType, BetOutcome
 from ..models.whistle_card import WhistleCard
+from ..models.match_history import MatchHistory, PlayerMatchStats
 
 from .bet_tracker import BetTracker
 from .action_calculator import ActionCalculator
@@ -32,6 +33,8 @@ class GameEngine:
         self.bet_tracker = BetTracker()
         self.action_calculator = ActionCalculator()
         self.score_calculator = ScoreCalculator()
+        # История матчей по ID
+        self._match_histories: Dict[UUID, MatchHistory] = {}
     
     def create_match(
         self,
@@ -107,7 +110,50 @@ class GameEngine:
             # ИСПРАВЛЕНО: Убираем current_manager_id — оба ставят одновременно
             current_manager_id=None  # Deprecated, но оставляем для обратной совместимости
         )
+        
+        # Инициализируем историю матча
+        self._init_match_history(match)
+        
         return match
+    
+    def _init_match_history(self, match: Match) -> None:
+        """Инициализировать историю матча"""
+        history = MatchHistory(match_id=match.id)
+        
+        if match.team1 and match.team2:
+            history.init_players(
+                match.manager1_id, match.team1.players,
+                match.manager2_id, match.team2.players
+            )
+        
+        self._match_histories[match.id] = history
+    
+    def get_match_history(self, match: Match) -> Optional[MatchHistory]:
+        """Получить историю матча"""
+        return self._match_histories.get(match.id)
+    
+    def get_player_stats(
+        self, 
+        match: Match, 
+        manager_id: UUID, 
+        player_id: UUID
+    ) -> Optional[PlayerMatchStats]:
+        """Получить статистику игрока"""
+        history = self.get_match_history(match)
+        if not history:
+            return None
+        return history.get_player_stats(manager_id, player_id, match.manager1_id)
+    
+    def print_current_stats(self, match: Match) -> str:
+        """Вывести текущую статистику матча"""
+        history = self.get_match_history(match)
+        if not history:
+            return "История матча не найдена"
+        
+        team1_name = match.team1.name if match.team1 else "Команда 1"
+        team2_name = match.team2.name if match.team2 else "Команда 2"
+        
+        return history.print_current_stats(match.manager1_id, team1_name, team2_name)
     
     def place_bet(
         self,
@@ -240,6 +286,7 @@ class GameEngine:
         ИСПРАВЛЕНО: 
         - Один бросок для обоих менеджеров
         - Автоматическое вытягивание карточки при выигрыше
+        - Запись статистики в MatchHistory
         
         Returns:
             (match, dice_value, won_bets_by_manager)
@@ -253,6 +300,9 @@ class GameEngine:
         dice_value = random.randint(1, 6)
         match.current_turn.dice_rolled = True
         match.current_turn.dice_value = dice_value
+        
+        # Получаем историю матча
+        history = self.get_match_history(match)
         
         # Определяем результаты ставок для ОБОИХ менеджеров
         won_bets_by_manager: Dict[UUID, List[Bet]] = {
@@ -277,7 +327,43 @@ class GameEngine:
                 if team:
                     player = team.get_player_by_id(bet.player_id)
                     if player:
-                        self.action_calculator.apply_bet_result(player, bet)
+                        # Применяем результат ставки
+                        saves, passes, goals = self.action_calculator.apply_bet_result(player, bet)
+                        
+                        # Записываем в историю
+                        if history:
+                            player_stats = history.get_player_stats(
+                                bet.manager_id, bet.player_id, match.manager1_id
+                            )
+                            if player_stats:
+                                # Отмечаем когда играл
+                                if player_stats.turn_played is None:
+                                    player_stats.turn_played = match.current_turn.turn_number
+                                    player_stats.phase_played = match.phase
+                                
+                                # Записываем действия
+                                if saves > 0:
+                                    player_stats.add_saves(saves, f"ставка {bet.bet_type.value}")
+                                if passes > 0:
+                                    player_stats.add_passes(passes, f"ставка {bet.bet_type.value}")
+                                if goals > 0:
+                                    player_stats.add_goals(goals, f"ставка {bet.bet_type.value}")
+        
+        # Записываем игроков без выигрышей в историю (они тоже играли)
+        if history:
+            for manager_id in [match.manager1_id, match.manager2_id]:
+                if manager_id == match.manager1_id:
+                    player_id = match.current_turn.manager1_player_id
+                else:
+                    player_id = match.current_turn.manager2_player_id
+                
+                if player_id:
+                    player_stats = history.get_player_stats(
+                        manager_id, player_id, match.manager1_id
+                    )
+                    if player_stats and player_stats.turn_played is None:
+                        player_stats.turn_played = match.current_turn.turn_number
+                        player_stats.phase_played = match.phase
         
         # АВТОМАТИЧЕСКОЕ ВЫТЯГИВАНИЕ КАРТОЧЕК
         # Менеджер 1
@@ -402,7 +488,8 @@ class GameEngine:
         
         # Получаем эффект и применяем
         effect = WhistleDeck.get_card_effect(card, match, manager_id, target_player_id)
-        match = WhistleDeck.apply_effect(match, effect)
+        history = self.get_match_history(match)
+        match = WhistleDeck.apply_effect(match, effect, history)
         
         card.is_used = True
         card.applied_to_player_id = target_player_id

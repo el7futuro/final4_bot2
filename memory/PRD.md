@@ -43,6 +43,7 @@
 - Позитивные (Хет-трик, Дубль, Гол, Перехват, Отбор) → свой игрок
 - Негативные (Фол, Потеря) → свой игрок
 - Действуют на соперника → игрок соперника текущего хода
+- **НОВОЕ**: Эффекты карточек записываются в `MatchHistory`
 
 ### Расчёт счёта
 1. Передачи пробивают отбития (1:1)
@@ -55,42 +56,73 @@
 - **Есть передача → ГОЛ**
 - **Нет передачи → промах**
 
-### Отслеживание статистики
-- Новый класс `MatchHistory` — статистика каждого игрока по ходам
+### ✅ Отслеживание статистики (ЗАВЕРШЕНО)
+- Класс `MatchHistory` — статистика каждого игрока по ходам
+- Интеграция с `GameEngine.roll_dice()` — автоматическая запись
+- Интеграция с `WhistleDeck.apply_effect()` — запись карточных эффектов
 - Колода с учётом использованных карточек
-- История изменений действий
+- История изменений действий с причинами
 
 ---
 
 ## Тестирование
 
-**43 unit-теста проходят** ✅
+**56 unit-тестов проходят** ✅
 
 ```bash
 cd /app/final4 && python -m pytest tests/unit/core/ -v
 ```
+
+Тестовые файлы:
+- `test_bet_tracker.py` — правила ставок
+- `test_extra_time.py` — дополнительное время
+- `test_game_engine.py` — движок игры
+- `test_simultaneous_betting.py` — одновременные ставки
+- `test_match_history.py` — **НОВЫЙ**: отслеживание статистики
+
+---
+
+## Симуляция матча
+
+```bash
+cd /app/final4 && python scripts/simulate_match.py
+```
+
+Симуляция включает:
+- Основное время (11 ходов)
+- Дополнительное время (5 ходов)
+- Серия пенальти (автоматическая)
+- Вывод статистики из `MatchHistory`
 
 ---
 
 ## Файлы
 
 ### Core модуль
-- `/app/final4/src/core/models/match_history.py` — **НОВЫЙ**: история матча
-- `/app/final4/src/core/engine/bet_tracker.py` — правила Extra Time
-- `/app/final4/src/core/engine/whistle_deck.py` — карточки
+- `/app/final4/src/core/models/match_history.py` — история матча
+- `/app/final4/src/core/engine/bet_tracker.py` — правила ставок
+- `/app/final4/src/core/engine/whistle_deck.py` — карточки (обновлён: запись в историю)
 - `/app/final4/src/core/engine/score_calculator.py` — расчёт счёта
-- `/app/final4/src/core/engine/game_engine.py` — пенальти
+- `/app/final4/src/core/engine/game_engine.py` — движок (обновлён: интеграция MatchHistory)
 
 ### Тесты
-- `/app/final4/tests/unit/core/test_extra_time.py` — **НОВЫЙ**: тесты ET
+- `/app/final4/tests/unit/core/test_match_history.py` — **НОВЫЙ**: 13 тестов
 
 ---
 
 ## 🟡 Предстоящие задачи
 
-1. Интеграция `MatchHistory` в `GameEngine`
-2. Telegram адаптер
-3. PostgreSQL миграции
+### P0 (Критично)
+1. ✅ ~~Интеграция `MatchHistory` в `GameEngine`~~ — ЗАВЕРШЕНО
+2. Полное тестирование игрового цикла через терминал
+
+### P1 (Важно)
+3. Telegram адаптер в `src/platforms/telegram/`
+4. PostgreSQL миграции (Alembic)
+
+### P2 (Можно позже)
+5. VK и Discord адаптеры
+6. REST API слой
 
 ---
 

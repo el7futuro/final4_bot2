@@ -1,82 +1,72 @@
 <analysis>**original_problem_statement**: 
-The user wants to build and refactor a multi-platform turn-based strategy game named Final 4 using a strict Clean Architecture approach. The project requires a  module containing pure business logic (no external ORM/API imports), and / adapters (Telegram, VK, Discord). Key mechanics include turn-based betting (using 16 squad players), dice rolls, specific limits on bet types (Goals, Even/Odd, Pass), and applying action cards (Whistle). 
+The user wants to build and refactor a multi-platform turn-based strategy game named Final 4 using a strict Clean Architecture approach. The project requires a  module containing pure business logic (no external ORM/API imports), and / adapters (Telegram, VK, Discord). Key mechanics include turn-based betting (using 16 squad players), dice rolls, applying action cards (Whistle deck of 40 cards), distinct Extra Time rules, and automatic Penalty shootouts.
 
 **PRODUCT REQUIREMENTS**:
 - Pure  module using only Python 3.11+ and Pydantic v2.
-- PostgreSQL DB with UUID primary keys and Row Level Security (RLS).
-- Telegram bot interface as the MVP platform.
-- Complex turn-based game logic (simultaneous betting, 1 dice roll for both players, strict dynamic availability limits for football players and bet types to prevent late-game deadlocks).
+- Complex turn-based game logic with strict adherence to the provided rulebook (Правила игры 2.docx).
+- 16-player squad (1 GK, 5 DF, 6 MF, 4 FW).
+- Simultaneous hidden betting, resolved by a single dice roll.
+- Extra Time: 5 backup field players, mandatory Goal bet for each, no GK.
+- Penalties: Automatic calculation based on accumulated passes during Main + Extra time.
 
 **User's preferred language**: Russian (Русский).
 **INSTRUCTION**: You MUST automatically detect the user's primary language from their messages inside the trajectory tag and INSTRUCT the next agent to respond in the user's preferred language only. **RESPOND IN RUSSIAN ONLY.**
 
 **what currently exists?**: 
-The project structure is fully scaffolded. The  module has its base models, interfaces, and game engine implemented along with 25 passing unit tests. The  (Redis cache, repos, event bus) and  (services) layers are set up. The Telegram platform skeleton (bot, handlers) is initialized. A manual game simulation was conducted which revealed several critical logic gaps in the  game engine, which have been thoroughly documented in .
+The  module has been heavily refactored to align with the actual game rules. The system now supports simultaneous betting, accurate Whistle card logic (tracking the 40-card deck and applying effects properly to self/opponent in the current turn), proper scoring (passes break saves, but excess passes do not grant extra goals), Extra Time constraints (mandatory goal bets), and automatic Penalty shootouts. A new  model was created to track individual player statistics (passes, saves, goals) throughout the match, which is critical for the automatic penalty phase. 43 Pytest unit tests are currently passing. 
 
 **Last working item**: 
-    - Last item agent was working: Analyzing the logical errors found during a manual match simulation with the user and preparing to fix the  and  in the  module based on .
+    - Last item agent was working: Integrating  into  and  to persistently track player statistics across all turns.
     - Status: IN PROGRESS
-    - Agent Testing Done: N (For the upcoming fixes)
-    - Which testing method agent to use?: backend testing agent / manual testing by running  and ============================= test session starts ==============================
+    - Agent Testing Done: N (Mid-implementation)
+    - Which testing method agent to use?: backend testing agent / manual testing by running ============================= test session starts ==============================
 platform linux -- Python 3.11.14, pytest-9.0.2, pluggy-1.6.0
 rootdir: /app
 plugins: asyncio-1.3.0, anyio-4.12.1
 asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 0 items
+collected 43 items
 
-============================ no tests ran in 0.00s =============================.
-    - User Testing Done: Y (The user acted as a player in a manual simulation to expose logical gaps).
+final4/tests/unit/core/test_bet_tracker.py ...............               [ 34%]
+final4/tests/unit/core/test_extra_time.py .........                      [ 55%]
+final4/tests/unit/core/test_game_engine.py ..........                    [ 79%]
+final4/tests/unit/core/test_simultaneous_betting.py .........            [100%]
+
+============================== 43 passed in 0.64s ============================== and .
+    - User Testing Done: N
 
 **All Pending/In progress Issue list**: 
-  - Issue 1: **Turn Structure & Dice Roll Logic (GameEngine)** - P0
-     - Attempted fixes: Identified the issue during simulation but not yet fixed.
-     - Next debug checklist: Modify  and  so that *both* managers make their bets FIRST, and then a *single* dice roll resolves the turn for both simultaneously.
-     - Why fix this issue and what will be achieved with the fix?: Core game mechanic requirement.
+  - Issue 1: **Complete MatchHistory Integration** - P0
+     - Attempted fixes: The agent started injecting  tracking into  and  but paused mid-stream.
+     - Next debug checklist: Ensure  correctly records passes, saves, and goals during  and when applying Whistle card effects.
+     - Why fix this issue and what will be achieved with the fix?: Necessary to automatically calculate the winner of a Penalty Shootout based on accumulated passes.
      - Status: IN PROGRESS
      - Is recurring issue?: N
-     - Should Test frontend/backend/both after fix?: backend (pytest and simulation script)
-     - Blocked on other issue: None
+     - Should Test frontend/backend/both after fix?: backend
 
-  - Issue 2: **Bet Type Validation (2 different types required)** - P0
-     - Attempted fixes: Not started.
-     - Next debug checklist: Update . A field player must make exactly 2 bets per turn, and they MUST be of *different* types (e.g., Cannot choose 'EVEN_ODD' twice).
-     - Why fix this issue?: Prevents invalid game states and follows strict game rules.
+  - Issue 2: **Full Match Flow Testing** - P0
+     - Attempted fixes: Tested in isolated chunks via terminal with the user.
+     - Next debug checklist: Update  to seamlessly simulate Main Time -> Extra Time -> Penalty Shootout to ensure state and  persist correctly.
+     - Why fix this issue?: Verifies the entire core game loop before building platform adapters.
      - Status: NOT STARTED
      - Is recurring issue?: N
      - Should Test frontend/backend/both after fix?: backend
 
-  - Issue 3: **Automatic Whistle Card Drawing** - P0
-     - Attempted fixes: Not started.
-     - Next debug checklist: Update the resolution logic in . If a manager wins at least 1 bet in a turn, they MUST draw a Whistle card automatically, and its effect must be applied.
-     - Why fix this issue?: Missing core reward mechanic.
-     - Status: NOT STARTED
-     - Is recurring issue?: N
-     - Should Test frontend/backend/both after fix?: backend
-
-  - Issue 4: **Availability Planner / Deadlock Prevention (Turns 5-11)** - P0
-     - Attempted fixes: Not started. User provided the algorithmic requirement.
-     - Next debug checklist: Implement a check in  or . Starting from Turn 5, the system must validate that the user's remaining limits (e.g., max 6 EVEN_ODD bets, max 4 FW goal bets) will not lead to a deadlock where a player has < 2 available bet types and the game cannot reach turn 11.
-     - Why fix this issue?: Prevents soft-locks in late game turns.
-     - Status: NOT STARTED
-     - Is recurring issue?: N
-     - Should Test frontend/backend/both after fix?: backend
-
-  - Issue 5: **PostgreSQL/Redis containers not running** - P2
-     - Attempted fixes: Agent tried  but Docker is unavailable in the environment.
-     - Next debug checklist: Use SQLite or mocks for testing if needed, or wait until deployment. DB logic is currently not blocking the Core logic development.
+  - Issue 3: **PostgreSQL/Redis containers not running** - P2
+     - Attempted fixes: Known environment limitation.
+     - Next debug checklist: Mock or use SQLite for immediate DB tests once Core is done.
      - Status: BLOCKED (by environment)
 
 **In progress Task List**: 
-  - Task 1: Fix Core Logic Bugs mapped in 
-     - Where to resume: Read  and modify  and .
-     - What will be achieved with this?: A fully playable and rule-compliant Core game engine.
+  - Task 1: Integrate MatchHistory Tracking
+     - Where to resume:  and . Check the last changes made via  and complete the integration of stat tracking.
+     - What will be achieved with this?: Accurate player stats for penalty calculations.
      - Status: IN PROGRESS
      - Should Test frontend/backend/both after fix?: backend
      - Blocked on something: None
 
 **Upcoming and Future Tasks**:
     Upcoming Tasks:
-    - Update  to reflect the simultaneous betting and single dice roll logic (P0).
+    - Test complete game loop (Main + Extra + Penalties) via terminal simulation (P0).
     - Set up Alembic and generate initial migrations based on  (Include RLS policies and UUIDs) (P1).
     - Implement the Telegram Adapter logic in  combining the fixed  engine with  (P1).
     
@@ -85,33 +75,27 @@ collected 0 items
     - Implement REST API layer () (P2).
 
 **Completed work in this session**:
--  module implementation (Redis cache, repositories, event bus).
-- Application layer scaffolding ().
-- Telegram adapter scaffolding (bot.py, handlers, states).
-- 25 Core unit tests written and passing (============================= test session starts ==============================
-platform linux -- Python 3.11.14, pytest-9.0.2, pluggy-1.6.0
-rootdir: /app
-plugins: asyncio-1.3.0, anyio-4.12.1
-asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 0 items
-
-============================ no tests ran in 0.00s =============================).
-- Fixed Initial Core rules: Turn 1 GK only, dynamic tracking of used players, 16-player squad availability.
-- Interactive manual simulation via chat to discover edge-case bugs and missing rules.
+- Simultaneous turns & single dice roll logic (DONE).
+- Bet type validation (2 different types per field player) (DONE).
+- Whistle Deck logic (40 cards, correct targets, state tracking) (DONE).
+- Correct scoring formula (Passes break saves 1:1, excess saves negate goals 2:1, excess passes DO NOT convert to goals) (DONE).
+- Extra Time logic (1 GK + 15 field players squad; ET uses 5 backup field players only; mandatory Goal bet for all ET players) (DONE).
+- Automatic Penalty calculation logic based on passes (DONE).
+- Creation of  to track stats (DONE).
 
 **Earlier issues found/mentioned but not fixed**:
-   - Issue 1: BUGS_FOUND.md list (detailed above in Pending Issues). The agent successfully identified and documented them but ran out of time to fix them.
+   None. The agent actively fixed all rule deviations pointed out by the user during the interactive simulations.
 
 **Known issue recurrence from previous fork**:
-  - Issue recurrence in previous fork: N/A
-  - Recurrence count: 0
-  - Status: NOT STARTED
+  - Issue recurrence in previous fork: Agent hallucinating game rules.
+  - Recurrence count: ~4 times in this session (misunderstood squad size, card targets, extra time limits, and penalty rules).
+  - Status: RESOLVED (Code fixed), but **WARNING**: The user is extremely strict about the rulebook. If you have ANY doubts about game logic, use  on the user's uploaded Правила игры 2.docx before writing code. Do not assume standard football rules.
 
 **Code Architecture**:
 
 
 **Key Technical Concepts**:
-Clean Architecture (Strictly isolated  module using pure Python/Pydantic v2).  adapters. Turn-based simultaneous state management. Dynamic constraints and limit planning.
+Clean Architecture (Strictly isolated  module using pure Python/Pydantic v2). Turn-based simultaneous state management. Event-driven stat tracking (). 
 
 **key DB schema**:
   - : {id (UUID), platform_id, stats, created_at}
@@ -122,218 +106,54 @@ Clean Architecture (Strictly isolated  module using pure Python/Pydantic v2).  a
   - None.
 
 **All files of reference**:
-  -  (Created: MUST READ. Contains the exact logic to fix next).
-  -  (Needs update for simultaneous turns/whistle cards).
-  -  (Needs update for 2 different bets rule and Turn 5+ availability planner).
-  -  (Created: Use this to test the game loop).
-  -  (Updated to track 16 players).
-  -  (Updated).
+  -  (Newly created to track stats)
+  -  (Currently being modified to inject MatchHistory)
+  -  (Currently being modified)
+  -  (Updated with Extra Time mandatory goal rules)
+  -  (Updated to track 40 cards properly)
+  -  &  (Continuously updated)
 
 **Areas that need refactoring**: 
- and  must be refactored to support simultaneous manager actions (Manager A bets -> Manager B bets -> 1 Dice Roll resolves both -> draw Whistle cards if won). 
+ has grown to ~900 lines. Once  integration is verified, consider extracting turn resolution or card application logic into separate handler classes.
 
 **key api endpoints**: 
-N/A (Telegram Polling / Webhooks).
+N/A (Telegram Polling MVP).
 
 **Critical Info for New Agent**:
 - **LANGUAGE**: You must reply to the user entirely in **Russian**.
-- **IMMEDIATE TASK**: Do NOT work on the Telegram bot or Database yet. Your first task is to read  and implement the 4 core logic fixes listed there. The user manually simulated a game to find these bugs.
-- **SIMULATION SCRIPT**: Use ============================================================
-⚽ Final 4 - Симуляция матча (с правилами доступности)
-============================================================
-
-👤 Менеджер 1: Спартак
-👤 Менеджер 2: ЦСКА
-
-📋 Матч создан
-
-✅ Составы выбраны (формация: 1-4-4-2)
-📊 Статус: in_progress
-
-============================================================
-🎮 НАЧАЛО МАТЧА
-============================================================
-
---- Ход 1 (внутренний #1): Спартак ---
-  Доступных игроков: 2
-  Ставка: Вратарь 1 (goalkeeper) -> even_odd
-  🎲 Кубик: 4 | Выиграно: 1
-  📝 Использовано игроков: 1
-
---- Ход 2 (внутренний #2): ЦСКА ---
-  Доступных игроков: 14
-  ⚠️ Ошибка ставки: Игрок не на поле
-  🎲 Кубик: 5 | Выиграно: 0
-  📝 Использовано игроков: 0
-
---- Ход 3 (внутренний #3): Спартак ---
-  Доступных игроков: 14
-  Ставка: Полузащитник 1 (midfielder) -> exact_number
-  🎲 Кубик: 2 | Выиграно: 0
-  📝 Использовано игроков: 2
-
---- Ход 4 (внутренний #4): ЦСКА ---
-  Доступных игроков: 14
-  Ставка: Полузащитник 4 (midfielder) -> exact_number
-  🎲 Кубик: 2 | Выиграно: 0
-  📝 Использовано игроков: 1
-
---- Ход 5 (внутренний #5): Спартак ---
-  Доступных игроков: 13
-  Ставка: Защитник 4 (defender) -> exact_number
-  🎲 Кубик: 6 | Выиграно: 0
-  📝 Использовано игроков: 3
-
---- Ход 6 (внутренний #6): ЦСКА ---
-  Доступных игроков: 13
-  ⚠️ Ошибка ставки: Игрок не на поле
-  🎲 Кубик: 5 | Выиграно: 0
-  📝 Использовано игроков: 1
-
---- Ход 7 (внутренний #7): Спартак ---
-  Доступных игроков: 12
-  Ставка: Защитник 1 (defender) -> even_odd
-  🎲 Кубик: 6 | Выиграно: 0
-  📝 Использовано игроков: 4
-
---- Ход 8 (внутренний #8): ЦСКА ---
-  Доступных игроков: 13
-  Ставка: Полузащитник 3 (midfielder) -> exact_number
-  🎲 Кубик: 3 | Выиграно: 0
-  📝 Использовано игроков: 2
-
---- Ход 9 (внутренний #9): Спартак ---
-  Доступных игроков: 11
-  Ставка: Полузащитник 2 (midfielder) -> exact_number
-  🎲 Кубик: 6 | Выиграно: 0
-  📝 Использовано игроков: 5
-
---- Ход 10 (внутренний #10): ЦСКА ---
-  Доступных игроков: 12
-  Ставка: Защитник 2 (defender) -> high_low
-  🎲 Кубик: 1 | Выиграно: 1
-  📝 Использовано игроков: 3
-
---- Ход 11 (внутренний #11): Спартак ---
-  Доступных игроков: 10
-  Ставка: Полузащитник 4 (midfielder) -> high_low
-  🎲 Кубик: 4 | Выиграно: 0
-  📝 Использовано игроков: 6
-
---- Ход 12 (внутренний #12): ЦСКА ---
-  Доступных игроков: 11
-  ⚠️ Ошибка ставки: Игрок не на поле
-  🎲 Кубик: 1 | Выиграно: 0
-  📝 Использовано игроков: 3
-
---- Ход 13 (внутренний #13): Спартак ---
-  Доступных игроков: 9
-  ⚠️ Ошибка ставки: Игрок не на поле
-  🎲 Кубик: 4 | Выиграно: 0
-  📝 Использовано игроков: 6
-
---- Ход 14 (внутренний #14): ЦСКА ---
-  Доступных игроков: 11
-  ⚠️ Ошибка ставки: Игрок не на поле
-  🎲 Кубик: 4 | Выиграно: 0
-  📝 Использовано игроков: 3
-
---- Ход 15 (внутренний #15): Спартак ---
-  Доступных игроков: 9
-  ⚠️ Ошибка ставки: Игрок не на поле
-  🎲 Кубик: 5 | Выиграно: 0
-  📝 Использовано игроков: 6
-
---- Ход 16 (внутренний #16): ЦСКА ---
-  Доступных игроков: 11
-  Ставка: Защитник 3 (defender) -> exact_number
-  🎲 Кубик: 2 | Выиграно: 0
-  📝 Использовано игроков: 4
-
---- Ход 17 (внутренний #17): Спартак ---
-  Доступных игроков: 9
-  Ставка: Полузащитник 3 (midfielder) -> exact_number
-  🎲 Кубик: 3 | Выиграно: 0
-  📝 Использовано игроков: 7
-
---- Ход 18 (внутренний #18): ЦСКА ---
-  Доступных игроков: 10
-  Ставка: Нападающий 2 (forward) -> exact_number
-  🎲 Кубик: 1 | Выиграно: 1
-  📝 Использовано игроков: 5
-
---- Ход 19 (внутренний #19): Спартак ---
-  Доступных игроков: 8
-  Ставка: Защитник 2 (defender) -> even_odd
-  🎲 Кубик: 1 | Выиграно: 0
-  📝 Использовано игроков: 8
-
---- Ход 20 (внутренний #20): ЦСКА ---
-  Доступных игроков: 9
-  ⚠️ Ошибка ставки: Игрок не на поле
-  🎲 Кубик: 4 | Выиграно: 0
-  📝 Использовано игроков: 5
-
---- Ход 21 (внутренний #21): Спартак ---
-  Доступных игроков: 7
-  Ставка: Защитник 3 (defender) -> high_low
-  🎲 Кубик: 1 | Выиграно: 1
-  📝 Использовано игроков: 9
-
---- Ход 22 (внутренний #22): ЦСКА ---
-  Доступных игроков: 9
-  Ставка: Защитник 1 (defender) -> even_odd
-  🎲 Кубик: 5 | Выиграно: 1
-  📝 Использовано игроков: 6
-
-============================================================
-🏁 МАТЧ ЗАВЕРШЁН
-============================================================
-
-🔵: Спартак
-  Отбития: 3
-  Передачи: 1
-  Голы: 0
-
-🔴: ЦСКА
-  Отбития: 2
-  Передачи: 1
-  Голы: 1
-
-📊 Счёт: 0:0
-
-📋 Использовано игроков:
-  Спартак: 9
-  ЦСКА: 6
-
-🤝 Ничья или матч не завершён to manually verify the game loop after making your fixes.
-- **ARCHITECTURE RULE**: Remember that  cannot contain any framework imports (no aiogram, sqlalchemy, etc.).
+- **RULEBOOK**: The user uploaded Правила игры 2.docx. The rules for Penalties, Extra Time, and Whistle Cards are highly unique. Do not guess mechanics.
+- **IMMEDIATE TASK**: The user gave the command Дальше / 1. You need to finish the  integration in  and  that the previous agent was in the middle of executing. 
 
 **documents and test reports created in this job**:
   - 
   - 
 
 **Last 10 User Messages and any pending HUMAN messages**:
- 1. Хотите разобрать найденные ошибки и обновить код? да (Yes, let's analyze the found bugs and update the code) - PENDING
- 2. User correcting dice logic: both players bet -> 1 dice roll. - COMPLETED (Documented)
- 3. User correcting bet types: 2 bets per field player must be of *different* types. - COMPLETED (Documented)
- 4. User correcting Whistle cards: Drawn automatically if 1 bet wins. - COMPLETED (Documented)
- 5. User correcting limits: Game needs a planner starting at turn 5 to prevent deadlocks. - COMPLETED (Documented)
+ 1. Дальше. - PENDING (User instructing agent to continue current code integration).
+ 2. Дальше. - COMPLETED
+ 3. 1 - COMPLETED
+ 4. Исправь код ии сделай, эээ, следи за статистикой каждого игрока... - COMPLETED (Agent created ).
+ 5. Во-первых, как это обе ставки у полузащитника один были у тебя на передачу?... - COMPLETED (Extra time rules clarified).
+ 6. так было перед пятым броско, на что поставил бот... - COMPLETED (Stat tracking gap identified).
+ 7. Покажи полную статистику дополнительного времени. - COMPLETED
+ 8. А теперь читаем правила пробитий пенальти... - COMPLETED (Penalty rules clarified).
+ 9. Да. (Ready to test penalties) - COMPLETED.
+ 10. Если передачи — лишние передачи конвертируются в голы... нет - COMPLETED (Scoring fixed).
 
 **Project Health Check**:
-Core Logic is Broken/Incomplete (Fails specific game rules outlined in BUGS_FOUND.md).
+Core Logic is heavily improved but currently mid-edit (Integrating MatchHistory).
 
 **3rd Party Integrations**:
  • Telegram Bot API (via aiogram) — requires User API Key (Present in )
 
 **Testing status**:
-  - Testing agent used after significant changes: NO
+  - Testing agent used after significant changes: NO (Manual pytests used due to pure Python core).
   - Troubleshoot agent used after agent stuck in loop: NO
-  - Test files created: , 
-  - Known regressions: Game engine logic fails edge cases for simultaneous turns and limit deadlocks.
+  - Test files created: , updated others.
+  - Known regressions: None currently, but ensure the new  integration does not break the 43 passing tests.
 
 **Credentials to test flow**:
 Telegram token is in .
 
 **What agent forgot to execute**:
-The agent successfully gathered all the bugs during the interactive simulation and documented them in , but the session ended before the code could be updated. The new agent must start by executing the fixes listed in that document.</analysis>
+The agent paused mid-implementation of  inside  /  due to context limits. Complete this integration immediately.</analysis>

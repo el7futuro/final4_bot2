@@ -11,6 +11,7 @@ from ..models.whistle_card import (
 )
 from ..models.match import Match
 from ..models.player import Player
+from ..models.match_history import MatchHistory, PlayerMatchStats
 
 
 class WhistleDeck:
@@ -125,42 +126,107 @@ class WhistleDeck:
         return effect
     
     @staticmethod
-    def apply_effect(match: Match, effect: CardEffect) -> Match:
-        """Применить эффект карточки к матчу"""
+    def apply_effect(
+        match: Match, 
+        effect: CardEffect,
+        history: Optional[MatchHistory] = None
+    ) -> Match:
+        """
+        Применить эффект карточки к матчу.
         
-        # Находим целевого игрока
+        Args:
+            match: Матч
+            effect: Эффект карточки
+            history: История матча для записи статистики (опционально)
+        """
+        card_name = effect.card_type.value if effect.card_type else "карточка"
+        
+        # Находим целевого игрока и его менеджера
         if effect.target_player_id:
             player: Optional[Player] = None
+            player_manager_id = None
+            
             for team in [match.team1, match.team2]:
                 if team:
                     p = team.get_player_by_id(effect.target_player_id)
                     if p:
                         player = p
+                        player_manager_id = team.manager_id
                         break
             
             if player:
                 # Добавление действий
                 if effect.goals_added > 0:
                     player.add_goals(effect.goals_added)
+                    # Записываем в историю
+                    if history and player_manager_id:
+                        stats = history.get_player_stats(
+                            player_manager_id, player.id, match.manager1_id
+                        )
+                        if stats:
+                            stats.add_goals(effect.goals_added, card_name)
+                
                 if effect.saves_added > 0:
                     player.add_saves(effect.saves_added)
+                    if history and player_manager_id:
+                        stats = history.get_player_stats(
+                            player_manager_id, player.id, match.manager1_id
+                        )
+                        if stats:
+                            stats.add_saves(effect.saves_added, card_name)
+                
                 if effect.passes_added > 0:
                     player.add_passes(effect.passes_added)
+                    if history and player_manager_id:
+                        stats = history.get_player_stats(
+                            player_manager_id, player.id, match.manager1_id
+                        )
+                        if stats:
+                            stats.add_passes(effect.passes_added, card_name)
                 
                 # Удаление действий
-                for _ in range(effect.goals_removed):
-                    player.remove_action("goal")
-                for _ in range(effect.saves_removed):
-                    player.remove_action("save")
-                for _ in range(effect.passes_removed):
-                    player.remove_action("pass")
+                if effect.goals_removed > 0:
+                    for _ in range(effect.goals_removed):
+                        player.remove_action("goal")
+                    if history and player_manager_id:
+                        stats = history.get_player_stats(
+                            player_manager_id, player.id, match.manager1_id
+                        )
+                        if stats:
+                            stats.remove_goals(effect.goals_removed, card_name)
                 
-                # Удаление игрока
+                if effect.saves_removed > 0:
+                    for _ in range(effect.saves_removed):
+                        player.remove_action("save")
+                    if history and player_manager_id:
+                        stats = history.get_player_stats(
+                            player_manager_id, player.id, match.manager1_id
+                        )
+                        if stats:
+                            stats.remove_saves(effect.saves_removed, card_name)
+                
+                if effect.passes_removed > 0:
+                    for _ in range(effect.passes_removed):
+                        player.remove_action("pass")
+                    if history and player_manager_id:
+                        stats = history.get_player_stats(
+                            player_manager_id, player.id, match.manager1_id
+                        )
+                        if stats:
+                            stats.remove_passes(effect.passes_removed, card_name)
+                
+                # Удаление игрока (красная карточка)
                 if effect.player_removed:
                     player.clear_stats()
+                    if history and player_manager_id:
+                        stats = history.get_player_stats(
+                            player_manager_id, player.id, match.manager1_id
+                        )
+                        if stats:
+                            stats.clear_all(card_name)
         
         # Автогол — добавляем гол сопернику
-        if effect.target_manager_id and effect.goals_added > 0:
+        if effect.target_manager_id and effect.goals_added > 0 and not effect.target_player_id:
             team = match.get_team(effect.target_manager_id)
             if team:
                 # Добавляем гол любому форварду на поле
@@ -168,6 +234,12 @@ class WhistleDeck:
                           if p.position.value == "forward" and p.is_available]
                 if forwards:
                     forwards[0].add_goals(effect.goals_added)
+                    if history:
+                        stats = history.get_player_stats(
+                            effect.target_manager_id, forwards[0].id, match.manager1_id
+                        )
+                        if stats:
+                            stats.add_goals(effect.goals_added, f"{card_name} (автогол)")
         
         # Отмена карточки
         if effect.card_cancelled_id:

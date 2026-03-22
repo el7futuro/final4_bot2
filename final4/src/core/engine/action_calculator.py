@@ -1,6 +1,7 @@
 # src/core/engine/action_calculator.py
 """Расчёт полезных действий"""
 
+from typing import Tuple
 from ..models.player import Player, Position
 from ..models.bet import Bet, BetType, BetOutcome
 
@@ -24,16 +25,21 @@ class ActionCalculator:
         Position.FORWARD: 1,
     }
     
-    def apply_bet_result(self, player: Player, bet: Bet) -> None:
+    def apply_bet_result(self, player: Player, bet: Bet) -> Tuple[int, int, int]:
         """
         Применить результат выигранной ставки к игроку.
         
         Args:
             player: Игрок, на которого была ставка
             bet: Выигранная ставка
+            
+        Returns:
+            (saves, passes, goals) — количество добавленных действий
         """
         if bet.outcome != BetOutcome.WON:
-            return
+            return (0, 0, 0)
+        
+        saves, passes, goals = 0, 0, 0
         
         if bet.bet_type == BetType.EVEN_ODD:
             # Чёт/нечёт -> отбития
@@ -47,7 +53,10 @@ class ActionCalculator:
         
         elif bet.bet_type == BetType.EXACT_NUMBER:
             # Точное число -> гол
+            goals = 1
             player.add_goals(1)
+        
+        return (saves, passes, goals)
     
     def get_action_preview(self, player: Player, bet_type: BetType) -> str:
         """

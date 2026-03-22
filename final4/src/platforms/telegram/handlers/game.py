@@ -23,6 +23,8 @@ router = Router(name="game")
 
 async def _render_game_screen(callback: CallbackQuery, state: FSMContext, show_stats: bool = False):
     """Отрендерить игровой экран"""
+    from aiogram.exceptions import TelegramBadRequest
+    
     data = await state.get_data()
     match_id = data.get("match_id")
     
@@ -86,16 +88,20 @@ async def _render_game_screen(callback: CallbackQuery, state: FSMContext, show_s
         is_confirmed = False
         both_ready = False
     
-    await callback.message.edit_text(
-        text,
-        reply_markup=Keyboards.game_actions_simultaneous(
-            bets_count=user_bets,
-            required_bets=required_bets,
-            is_confirmed=is_confirmed,
-            both_ready=both_ready,
-            dice_rolled=turn and turn.dice_rolled if turn else False
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=Keyboards.game_actions_simultaneous(
+                bets_count=user_bets,
+                required_bets=required_bets,
+                is_confirmed=is_confirmed,
+                both_ready=both_ready,
+                dice_rolled=turn and turn.dice_rolled if turn else False
+            )
         )
-    )
+    except TelegramBadRequest:
+        # Сообщение не изменилось — игнорируем
+        pass
 
 
 @router.callback_query(F.data == "back_to_game")
@@ -484,22 +490,24 @@ def _bot_make_bets(storage, match):
         bet_type = random.choice(remaining)
         used_types.append(bet_type)
         
-        bet = Bet(
-            match_id=match.id,
-            manager_id=BOT_USER_ID,
-            player_id=player.id,
-            turn_number=turn_num,
-            bet_type=bet_type
-        )
+        # Создаём ставку со всеми параметрами СРАЗУ
+        bet_params = {
+            "match_id": match.id,
+            "manager_id": BOT_USER_ID,
+            "player_id": player.id,
+            "turn_number": turn_num,
+            "bet_type": bet_type
+        }
         
         if bet_type == BetType.EVEN_ODD:
-            bet.even_odd_choice = random.choice([EvenOddChoice.EVEN, EvenOddChoice.ODD])
+            bet_params["even_odd_choice"] = random.choice([EvenOddChoice.EVEN, EvenOddChoice.ODD])
         elif bet_type == BetType.HIGH_LOW:
-            bet.high_low_choice = random.choice([HighLowChoice.HIGH, HighLowChoice.LOW])
+            bet_params["high_low_choice"] = random.choice([HighLowChoice.HIGH, HighLowChoice.LOW])
         elif bet_type == BetType.EXACT_NUMBER:
-            bet.exact_number = random.randint(1, 6)
+            bet_params["exact_number"] = random.randint(1, 6)
         
         try:
+            bet = Bet(**bet_params)
             match, _ = engine.place_bet(match, BOT_USER_ID, player.id, bet)
         except ValueError:
             pass

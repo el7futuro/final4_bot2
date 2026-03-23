@@ -79,10 +79,12 @@ async def _render_game_screen(callback: CallbackQuery, state: FSMContext, show_s
     if show_stats and match.team1 and match.team2:
         text += "\n\n" + renderer.render_team_stats(
             match.team1, 
+            match=match,
             is_opponent=(match.manager1_id != user.id)
         )
         text += "\n\n" + renderer.render_team_stats(
             match.team2,
+            match=match,
             is_opponent=(match.manager2_id != user.id)
         )
     

@@ -7,7 +7,7 @@ from src.core.models.match import Match, MatchStatus, MatchPhase
 from src.core.models.team import Team
 from src.core.models.player import Player, Position
 from src.core.models.bet import Bet, BetOutcome
-from src.core.models.whistle_card import WhistleCard
+from src.core.models.whistle_card import WhistleCard, CardType
 
 
 class MatchRenderer:
@@ -42,23 +42,88 @@ class MatchRenderer:
         lines = [f"{emoji} <b>{text}</b>"]
         
         if match.status in [MatchStatus.IN_PROGRESS, MatchStatus.EXTRA_TIME]:
-            lines.append(f"\n📊 Счёт: <b>{match.score.manager1_goals}:{match.score.manager2_goals}</b>")
+            # Рассчитываем текущий счёт
+            score1, score2, details = MatchRenderer.calculate_current_score(match)
+            lines.append(f"\n📊 <b>Счёт: {score1}:{score2}</b>")
+            lines.append(f"<i>{details}</i>")
             
             if match.current_turn:
-                lines.append(f"🔄 Ход: {match.current_turn.turn_number}")
-                
-                # Чей ход
-                if viewer_id:
-                    if match.current_turn.current_manager_id == viewer_id:
-                        lines.append("👉 <b>Ваш ход!</b>")
-                    else:
-                        lines.append("⏳ Ход соперника")
+                lines.append(f"\n🔄 Ход: {match.current_turn.turn_number}")
         
         return "\n".join(lines)
     
     @staticmethod
-    def render_team_stats(team: Team, is_opponent: bool = False) -> str:
-        """Отрендерить статистику команды"""
+    def calculate_current_score(match: Match) -> tuple:
+        """
+        Рассчитать текущий счёт по формуле:
+        1. Передачи пробивают отбития соперника (1:1)
+        2. Если передачи >= отбития — все голы засчитываются
+        3. Если отбития > передачи — оставшиеся гасят голы (2:1)
+        
+        Возвращает: (голы_команды1, голы_команды2, детали_расчёта)
+        """
+        if not match.team1 or not match.team2:
+            return 0, 0, ""
+        
+        match.team1.calculate_stats()
+        match.team2.calculate_stats()
+        
+        # Команда 1 атакует команду 2
+        passes1 = match.team1.stats.total_passes
+        goals1_raw = match.team1.stats.total_goals
+        saves2 = match.team2.stats.total_saves
+        
+        # Команда 2 атакует команду 1
+        passes2 = match.team2.stats.total_passes
+        goals2_raw = match.team2.stats.total_goals
+        saves1 = match.team1.stats.total_saves
+        
+        # Расчёт голов команды 1
+        remaining_saves2 = max(0, saves2 - passes1)  # Отбития после пробития передачами
+        goals1 = max(0, goals1_raw - (remaining_saves2 // 2))  # Каждые 2 отбития гасят 1 гол
+        
+        # Расчёт голов команды 2
+        remaining_saves1 = max(0, saves1 - passes2)
+        goals2 = max(0, goals2_raw - (remaining_saves1 // 2))
+        
+        # Формируем детали
+        details_parts = []
+        
+        # Детали для команды 1
+        if passes1 > 0 or goals1_raw > 0:
+            d1 = f"Вы: {goals1_raw}⚽"
+            if passes1 > 0:
+                d1 += f", {passes1}🎯"
+            if saves2 > 0:
+                blocked = min(passes1, saves2)
+                d1 += f" (пробито {blocked} отб)"
+            if remaining_saves2 > 0 and goals1_raw > 0:
+                canceled = (remaining_saves2 // 2)
+                if canceled > 0:
+                    d1 += f", -{canceled}⚽ отбито"
+            details_parts.append(d1)
+        
+        # Детали для команды 2
+        if passes2 > 0 or goals2_raw > 0:
+            d2 = f"Соп: {goals2_raw}⚽"
+            if passes2 > 0:
+                d2 += f", {passes2}🎯"
+            if saves1 > 0:
+                blocked = min(passes2, saves1)
+                d2 += f" (пробито {blocked} отб)"
+            if remaining_saves1 > 0 and goals2_raw > 0:
+                canceled = (remaining_saves1 // 2)
+                if canceled > 0:
+                    d2 += f", -{canceled}⚽ отбито"
+            details_parts.append(d2)
+        
+        details = " | ".join(details_parts) if details_parts else "0:0"
+        
+        return goals1, goals2, details
+    
+    @staticmethod
+    def render_team_stats(team: Team, match: Match = None, is_opponent: bool = False) -> str:
+        """Отрендерить статистику команды с эффектами карточек"""
         team.calculate_stats()
         
         prefix = "🔴 Соперник" if is_opponent else "🔵 Ваша команда"
@@ -82,9 +147,46 @@ class MatchRenderer:
                     stats_str.append(f"{p.stats.passes} пер")
                 if p.stats.goals > 0:
                     stats_str.append(f"{p.stats.goals} гол")
-                lines.append(f"  • {p.name}: {', '.join(stats_str)}")
+                
+                player_line = f"  • {p.name}: {', '.join(stats_str)}"
+                
+                # Добавляем эффекты карточек
+                if match:
+                    card_effects = MatchRenderer._get_player_card_effects(match, team.manager_id, p.id)
+                    if card_effects:
+                        player_line += f" [{card_effects}]"
+                
+                lines.append(player_line)
         
         return "\n".join(lines)
+    
+    @staticmethod
+    def _get_player_card_effects(match: Match, manager_id, player_id) -> str:
+        """Получить список эффектов карточек для игрока"""
+        effects = []
+        
+        for card in match.whistle_cards_drawn:
+            if card.applied_to_player_id == player_id and card.is_used:
+                card_name = card.get_display_name()
+                
+                # Определяем, позитивный или негативный эффект
+                if card.card_type in [CardType.GOAL, CardType.DOUBLE, CardType.HAT_TRICK, 
+                                      CardType.INTERCEPTION, CardType.TACKLE]:
+                    effects.append(f"✅{card_name}")
+                elif card.card_type in [CardType.FOUL, CardType.LOSS, CardType.YELLOW_CARD,
+                                        CardType.OFFSIDE]:
+                    effects.append(f"❌{card_name}")
+                elif card.card_type == CardType.RED_CARD:
+                    effects.append(f"🟥{card_name}")
+                elif card.card_type == CardType.PENALTY:
+                    if card.penalty_scored:
+                        effects.append(f"⚽Пенальти")
+                    else:
+                        effects.append(f"❌Пенальти")
+                else:
+                    effects.append(card_name)
+        
+        return ", ".join(effects)
     
     @staticmethod
     def render_player_card(player: Player, show_stats: bool = True) -> str:

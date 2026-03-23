@@ -104,9 +104,20 @@ class BetTracker:
                 if first_is_goal and second_is_goal:
                     raise ValueError("В дополнительное время только ОДНА ставка на гол, вторая — чёт/нечёт или больше/меньше")
             else:
-                # ОСНОВНОЕ ВРЕМЯ: просто разные типы
+                # ОСНОВНОЕ ВРЕМЯ: 
+                # - Форварды и полузащитники МОГУТ делать 2 ставки на гол (если лимит позволяет)
+                # - Защитники — 2 РАЗНЫХ типа (только 1 гол на всех защитников)
                 if existing_bet_type and existing_bet_type == bet.bet_type:
-                    raise ValueError(f"Две ставки должны быть РАЗНЫХ типов (уже есть {existing_bet_type.value})")
+                    # Проверяем исключения для 2 одинаковых ставок на гол
+                    if bet.bet_type == BetType.EXACT_NUMBER:
+                        # Форварды и полузащитники могут делать 2 ставки на гол
+                        if player.position in [Position.FORWARD, Position.MIDFIELDER]:
+                            # Проверка лимита уже произошла в _validate_goal_bet
+                            pass  # Разрешаем
+                        else:
+                            raise ValueError(f"Защитники должны делать 2 РАЗНЫХ типа ставок")
+                    else:
+                        raise ValueError(f"Две ставки должны быть РАЗНЫХ типов (уже есть {existing_bet_type.value})")
     
     def _count_even_odd_bets(self, match: Match, manager_id: UUID) -> int:
         """Подсчитать количество ставок на чёт/нечёт"""

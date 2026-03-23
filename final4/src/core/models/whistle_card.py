@@ -87,6 +87,7 @@ class WhistleCard(BaseModel):
     applied_by_manager_id: Optional[UUID] = None
     turn_applied: Optional[int] = None
     cancelled_card_id: Optional[UUID] = None
+    penalty_scored: Optional[bool] = None  # Результат пенальти (если карточка Пенальти)
 
     def get_target_type(self) -> CardTarget:
         """Определить тип цели для карточки"""

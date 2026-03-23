@@ -70,6 +70,20 @@ class MatchRenderer:
             f"⚽ Голы: {team.stats.total_goals}",
         ]
         
+        # Показываем статистику каждого игравшего игрока
+        played_players = [p for p in team.players if p.stats.saves > 0 or p.stats.passes > 0 or p.stats.goals > 0]
+        if played_players:
+            lines.append("\n<b>Игроки:</b>")
+            for p in played_players:
+                stats_str = []
+                if p.stats.saves > 0:
+                    stats_str.append(f"{p.stats.saves} отб")
+                if p.stats.passes > 0:
+                    stats_str.append(f"{p.stats.passes} пер")
+                if p.stats.goals > 0:
+                    stats_str.append(f"{p.stats.goals} гол")
+                lines.append(f"  • {p.name}: {', '.join(stats_str)}")
+        
         return "\n".join(lines)
     
     @staticmethod
@@ -337,7 +351,7 @@ class MatchRenderer:
     
     @staticmethod
     def render_cards_drawn(match: Match, viewer_id) -> str:
-        """Отрендерить вытянутые карточки"""
+        """Отрендерить вытянутые карточки и их эффекты"""
         if not match.current_turn:
             return ""
         
@@ -351,13 +365,24 @@ class MatchRenderer:
         if my_card_id:
             card = next((c for c in match.whistle_cards_drawn if c.id == my_card_id), None)
             if card:
-                lines.append(f"🃏 Ваша карточка: <b>{card.get_display_name()}</b>")
+                card_text = f"🃏 Ваша карточка: <b>{card.get_display_name()}</b>"
+                if card.is_used:
+                    card_text += " ✅"
+                    # Показываем результат пенальти
+                    if card.penalty_scored is not None:
+                        card_text += " ⚽ ГОЛ!" if card.penalty_scored else " ❌ Промах"
+                lines.append(card_text)
         
         # Карточка соперника
         opp_card_id = turn.manager2_card_id if is_m1 else turn.manager1_card_id
         if opp_card_id:
             card = next((c for c in match.whistle_cards_drawn if c.id == opp_card_id), None)
             if card:
-                lines.append(f"🔴 Карточка соперника: <b>{card.get_display_name()}</b>")
+                card_text = f"🔴 Карточка соперника: <b>{card.get_display_name()}</b>"
+                if card.is_used:
+                    card_text += " ✅"
+                    if card.penalty_scored is not None:
+                        card_text += " ⚽ ГОЛ!" if card.penalty_scored else " ❌ Промах"
+                lines.append(card_text)
         
         return "\n".join(lines) if lines else ""

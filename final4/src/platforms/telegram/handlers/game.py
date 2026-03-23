@@ -56,15 +56,24 @@ async def _render_game_screen(callback: CallbackQuery, state: FSMContext, show_s
     if match.current_turn:
         text += "\n\n" + renderer.render_turn_info_simultaneous(match, user.id)
         
-        # Показываем выбранного игрока если есть
+        # Показываем выбранного игрока и сделанные ставки
         is_user_m1 = match.manager1_id == user.id
         player_id = match.current_turn.manager1_player_id if is_user_m1 else match.current_turn.manager2_player_id
+        bets_ids = match.current_turn.manager1_bets if is_user_m1 else match.current_turn.manager2_bets
         
         if player_id:
             team = match.team1 if is_user_m1 else match.team2
             player = team.get_player_by_id(player_id) if team else None
             if player:
                 text += f"\n\n🎯 <b>Выбран игрок:</b> {player.name} ({player.position.value})"
+                
+                # Показываем сделанные ставки
+                if bets_ids:
+                    text += "\n📝 <b>Ваши ставки:</b>"
+                    for bet_id in bets_ids:
+                        bet = next((b for b in match.bets if b.id == bet_id), None)
+                        if bet:
+                            text += f"\n   • {bet.bet_type.value}: {bet.get_display_value()}"
     
     # Статистика команд
     if show_stats and match.team1 and match.team2:

@@ -422,9 +422,10 @@ class GameEngine:
         manager_id: UUID
     ) -> Tuple[Match, Optional[WhistleCard]]:
         """
-        Автоматически вытянуть карточку Свисток при выигрыше ставки.
+        Автоматически вытянуть и применить карточку Свисток при выигрыше ставки.
         
-        Вызывается из roll_dice(), не требует отдельного вызова.
+        Простые карточки (без выбора цели) применяются сразу.
+        Карточки с выбором цели требуют отдельного действия.
         """
         if not match.whistle_deck:
             return match, None
@@ -434,6 +435,57 @@ class GameEngine:
             card.applied_by_manager_id = manager_id
             card.turn_applied = match.current_turn.turn_number if match.current_turn else 1
             match.whistle_cards_drawn.append(card)
+            
+            # Автоматически применяем карточки без выбора цели
+            if not card.requires_target():
+                # Определяем цель автоматически
+                target_player_id = None
+                target_type = card.get_target_type()
+                
+                from ..models.whistle_card import CardTarget
+                
+                if target_type == CardTarget.SELF_PLAYER:
+                    # Свой игрок текущего хода
+                    if manager_id == match.manager1_id:
+                        target_player_id = match.current_turn.manager1_player_id
+                    else:
+                        target_player_id = match.current_turn.manager2_player_id
+                
+                elif target_type == CardTarget.OPPONENT_PLAYER:
+                    # Игрок соперника текущего хода
+                    if manager_id == match.manager1_id:
+                        target_player_id = match.current_turn.manager2_player_id
+                    else:
+                        target_player_id = match.current_turn.manager1_player_id
+                
+                # Применяем карточку
+                effect = WhistleDeck.get_card_effect(card, match, manager_id, target_player_id)
+                history = self.get_match_history(match)
+                match = WhistleDeck.apply_effect(match, effect, history)
+                
+                card.is_used = True
+                card.applied_to_player_id = target_player_id
+                
+                # Обработка пенальти — автоматический розыгрыш (50/50)
+                if match.current_turn and match.current_turn.waiting_for_penalty_roll:
+                    import random
+                    penalty_success = random.choice([True, False])
+                    match.current_turn.waiting_for_penalty_roll = False
+                    
+                    if penalty_success and target_player_id:
+                        # Гол от пенальти
+                        team = match.get_team(manager_id)
+                        if team:
+                            player = team.get_player_by_id(target_player_id)
+                            if player:
+                                player.add_goals(1)
+                                if history:
+                                    stats = history.get_player_stats(manager_id, target_player_id, match.manager1_id)
+                                    if stats:
+                                        stats.add_goals(1, "пенальти")
+                                card.penalty_scored = True
+                    else:
+                        card.penalty_scored = False
         
         return match, card
     

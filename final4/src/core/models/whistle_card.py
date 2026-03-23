@@ -113,8 +113,18 @@ class WhistleCard(BaseModel):
         return names.get(self.card_type, self.card_type.value)
 
     def requires_target(self) -> bool:
-        """Требуется ли выбор цели"""
-        return self.card_type not in [CardType.OWN_GOAL, CardType.VAR]
+        """
+        Требуется ли РУЧНОЙ выбор цели.
+        
+        Большинство карточек применяются автоматически:
+        - Позитивные (GOAL, HAT_TRICK, DOUBLE, INTERCEPTION, TACKLE) -> свой игрок текущего хода
+        - Негативные (FOUL, LOSS, YELLOW_CARD, RED_CARD, OFFSIDE) -> игрок соперника текущего хода
+        - OWN_GOAL, VAR, PENALTY -> не требуют выбора
+        
+        Возвращает True только для карточек, которые НЕЛЬЗЯ применить автоматически.
+        """
+        # Все основные карточки применяются автоматически
+        return False
 
 
 class CardEffect(BaseModel):

@@ -108,10 +108,10 @@ class Team(BaseModel):
         return True
 
     def calculate_stats(self) -> TeamStats:
-        """Пересчитать суммарную статистику"""
+        """Пересчитать суммарную статистику (все 16 игроков)"""
         self.stats = TeamStats(
-            total_saves=sum(p.stats.saves for p in self.players if p.is_on_field),
-            total_passes=sum(p.stats.passes for p in self.players if p.is_on_field),
-            total_goals=sum(p.stats.goals for p in self.players if p.is_on_field)
+            total_saves=sum(p.stats.saves for p in self.players),
+            total_passes=sum(p.stats.passes for p in self.players),
+            total_goals=sum(p.stats.goals for p in self.players)
         )
         return self.stats

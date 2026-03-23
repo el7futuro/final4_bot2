@@ -424,68 +424,81 @@ class GameEngine:
         """
         Автоматически вытянуть и применить карточку Свисток при выигрыше ставки.
         
-        Простые карточки (без выбора цели) применяются сразу.
-        Карточки с выбором цели требуют отдельного действия.
+        Карточки применяются автоматически:
+        - SELF_PLAYER (гол, дубль, хет-трик, перехват, отбор, фол, потеря) -> свой игрок
+        - OPPONENT_PLAYER (удаление, предупреждение, офсайд) -> игрок соперника
+        - OPPONENT_TEAM (автогол) -> команда соперника
+        - SPECIAL (пенальти, ВАР) -> особая логика
         """
         if not match.whistle_deck:
             return match, None
         
         card = WhistleDeck.draw_card(match.whistle_deck)
-        if card:
-            card.applied_by_manager_id = manager_id
-            card.turn_applied = match.current_turn.turn_number if match.current_turn else 1
-            match.whistle_cards_drawn.append(card)
+        if not card:
+            return match, None
+        
+        card.applied_by_manager_id = manager_id
+        card.turn_applied = match.current_turn.turn_number if match.current_turn else 1
+        match.whistle_cards_drawn.append(card)
+        
+        # Записываем ID карточки в ход
+        if match.current_turn:
+            if manager_id == match.manager1_id:
+                match.current_turn.manager1_card_id = card.id
+            else:
+                match.current_turn.manager2_card_id = card.id
+        
+        # Определяем цель по типу карточки
+        target_player_id = None
+        target_type = card.get_target_type()
+        
+        from ..models.whistle_card import CardTarget
+        
+        if target_type == CardTarget.SELF_PLAYER:
+            # Свой игрок текущего хода
+            if manager_id == match.manager1_id:
+                target_player_id = match.current_turn.manager1_player_id if match.current_turn else None
+            else:
+                target_player_id = match.current_turn.manager2_player_id if match.current_turn else None
+        
+        elif target_type == CardTarget.OPPONENT_PLAYER:
+            # Игрок соперника текущего хода
+            if manager_id == match.manager1_id:
+                target_player_id = match.current_turn.manager2_player_id if match.current_turn else None
+            else:
+                target_player_id = match.current_turn.manager1_player_id if match.current_turn else None
+        
+        # Применяем карточку
+        effect = WhistleDeck.get_card_effect(card, match, manager_id, target_player_id)
+        history = self.get_match_history(match)
+        match = WhistleDeck.apply_effect(match, effect, history)
+        
+        card.is_used = True
+        card.applied_to_player_id = target_player_id
+        
+        # Обработка пенальти — автоматический розыгрыш (50/50)
+        if match.current_turn and match.current_turn.waiting_for_penalty_roll:
+            import random
+            penalty_success = random.choice([True, False])
+            match.current_turn.waiting_for_penalty_roll = False
             
-            # Автоматически применяем карточки без выбора цели
-            if not card.requires_target():
-                # Определяем цель автоматически
-                target_player_id = None
-                target_type = card.get_target_type()
-                
-                from ..models.whistle_card import CardTarget
-                
-                if target_type == CardTarget.SELF_PLAYER:
-                    # Свой игрок текущего хода
-                    if manager_id == match.manager1_id:
-                        target_player_id = match.current_turn.manager1_player_id
-                    else:
-                        target_player_id = match.current_turn.manager2_player_id
-                
-                elif target_type == CardTarget.OPPONENT_PLAYER:
-                    # Игрок соперника текущего хода
-                    if manager_id == match.manager1_id:
-                        target_player_id = match.current_turn.manager2_player_id
-                    else:
-                        target_player_id = match.current_turn.manager1_player_id
-                
-                # Применяем карточку
-                effect = WhistleDeck.get_card_effect(card, match, manager_id, target_player_id)
-                history = self.get_match_history(match)
-                match = WhistleDeck.apply_effect(match, effect, history)
-                
-                card.is_used = True
-                card.applied_to_player_id = target_player_id
-                
-                # Обработка пенальти — автоматический розыгрыш (50/50)
-                if match.current_turn and match.current_turn.waiting_for_penalty_roll:
-                    import random
-                    penalty_success = random.choice([True, False])
-                    match.current_turn.waiting_for_penalty_roll = False
-                    
-                    if penalty_success and target_player_id:
-                        # Гол от пенальти
-                        team = match.get_team(manager_id)
-                        if team:
-                            player = team.get_player_by_id(target_player_id)
-                            if player:
-                                player.add_goals(1)
-                                if history:
-                                    stats = history.get_player_stats(manager_id, target_player_id, match.manager1_id)
-                                    if stats:
-                                        stats.add_goals(1, "пенальти")
-                                card.penalty_scored = True
-                    else:
-                        card.penalty_scored = False
+            # Цель пенальти — свой игрок
+            penalty_target = match.current_turn.manager1_player_id if manager_id == match.manager1_id else match.current_turn.manager2_player_id
+            
+            if penalty_success and penalty_target:
+                # Гол от пенальти
+                team = match.get_team(manager_id)
+                if team:
+                    player = team.get_player_by_id(penalty_target)
+                    if player:
+                        player.add_goals(1)
+                        if history:
+                            stats = history.get_player_stats(manager_id, penalty_target, match.manager1_id)
+                            if stats:
+                                stats.add_goals(1, "пенальти")
+                        card.penalty_scored = True
+            else:
+                card.penalty_scored = False
         
         return match, card
     

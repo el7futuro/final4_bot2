@@ -252,12 +252,14 @@ class WhistleDeck:
                         if stats:
                             stats.add_goals(effect.goals_added, f"{card_name} (автогол)")
         
-        # Отмена карточки
+        # Отмена карточки (VAR)
         if effect.card_cancelled_id:
             for card in match.whistle_cards_drawn:
-                if card.id == effect.card_cancelled_id:
+                if card.id == effect.card_cancelled_id and card.is_used:
+                    # Откатываем эффект карточки
+                    WhistleDeck._revert_card_effect(card, match, history)
                     card.is_used = False
-                    # TODO: откатить эффект отменённой карточки
+                    card.var_cancelled = True
                     break
         
         # Пенальти
@@ -265,6 +267,86 @@ class WhistleDeck:
             match.current_turn.waiting_for_penalty_roll = True
         
         return match
+    
+    @staticmethod
+    def _revert_card_effect(card: WhistleCard, match: Match, history: Optional[MatchHistory] = None) -> None:
+        """
+        Откатить эффект карточки (используется для VAR).
+        
+        Инвертирует все добавления/удаления действий.
+        """
+        if not card.applied_to_player_id:
+            return
+        
+        player: Optional[Player] = None
+        player_manager_id = None
+        
+        for team in [match.team1, match.team2]:
+            if team:
+                p = team.get_player_by_id(card.applied_to_player_id)
+                if p:
+                    player = p
+                    player_manager_id = team.manager_id
+                    break
+        
+        if not player:
+            return
+        
+        card_name = f"VAR отмена ({card.card_type.value})"
+        
+        # Откатываем эффекты в зависимости от типа карточки
+        if card.card_type == CardType.GOAL:
+            player.remove_action("goal")
+            if history and player_manager_id:
+                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
+                if stats:
+                    stats.remove_goals(1, card_name)
+        
+        elif card.card_type == CardType.DOUBLE:
+            for _ in range(2):
+                player.remove_action("goal")
+            if history and player_manager_id:
+                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
+                if stats:
+                    stats.remove_goals(2, card_name)
+        
+        elif card.card_type == CardType.HAT_TRICK:
+            for _ in range(3):
+                player.remove_action("goal")
+            if history and player_manager_id:
+                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
+                if stats:
+                    stats.remove_goals(3, card_name)
+        
+        elif card.card_type == CardType.INTERCEPTION:
+            player.remove_action("pass")
+            if history and player_manager_id:
+                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
+                if stats:
+                    stats.remove_passes(1, card_name)
+        
+        elif card.card_type == CardType.TACKLE:
+            player.remove_action("save")
+            if history and player_manager_id:
+                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
+                if stats:
+                    stats.remove_saves(1, card_name)
+        
+        elif card.card_type == CardType.OFFSIDE:
+            # Офсайд отменял гол — возвращаем гол
+            player.add_goals(1)
+            if history and player_manager_id:
+                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
+                if stats:
+                    stats.add_goals(1, card_name)
+        
+        elif card.card_type == CardType.OWN_GOAL:
+            # Автогол давал гол сопернику — забираем гол
+            player.remove_action("goal")
+            if history and player_manager_id:
+                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
+                if stats:
+                    stats.remove_goals(1, card_name)
     
     @staticmethod
     def get_valid_targets(

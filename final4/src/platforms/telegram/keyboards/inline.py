@@ -181,6 +181,13 @@ class Keyboards:
                         callback_data="make_bet"
                     ))
                 
+                if bets_count > 0:
+                    # Есть ставки — можно отменить
+                    builder.row(InlineKeyboardButton(
+                        text="🔄 Отменить ставки",
+                        callback_data="cancel_bets"
+                    ))
+                
                 if bets_count >= required_bets:
                     builder.row(InlineKeyboardButton(
                         text="✅ Подтвердить ставки",

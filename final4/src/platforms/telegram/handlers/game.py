@@ -385,6 +385,35 @@ async def cb_bet_value_selected(callback: CallbackQuery, state: FSMContext):
     await _render_game_screen(callback, state)
 
 
+@router.callback_query(F.data == "cancel_bets", MatchStates.in_game)
+async def cb_cancel_bets(callback: CallbackQuery, state: FSMContext):
+    """Отменить все ставки текущего хода"""
+    data = await state.get_data()
+    match_id = data.get("match_id")
+    
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    match = storage.get_match(UUID(match_id))
+    if not match:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    # Отменяем ставки
+    try:
+        match = storage.engine.cancel_turn_bets(match, user.id)
+        storage.save_match(match)
+        await callback.answer("🔄 Ставки отменены!")
+    except ValueError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    
+    await _render_game_screen(callback, state)
+
+
 @router.callback_query(F.data == "confirm_bets", MatchStates.in_game)
 async def cb_confirm_bets(callback: CallbackQuery, state: FSMContext):
     """Подтвердить ставки"""

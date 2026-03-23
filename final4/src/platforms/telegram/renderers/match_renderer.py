@@ -46,9 +46,6 @@ class MatchRenderer:
             score1, score2, details = MatchRenderer.calculate_current_score(match)
             lines.append(f"\n📊 <b>Счёт: {score1}:{score2}</b>")
             lines.append(f"<i>{details}</i>")
-            
-            if match.current_turn:
-                lines.append(f"\n🔄 Ход: {match.current_turn.turn_number}")
         
         return "\n".join(lines)
     
@@ -137,9 +134,23 @@ class MatchRenderer:
         
         # Показываем статистику каждого игравшего игрока
         played_players = [p for p in team.players if p.stats.saves > 0 or p.stats.passes > 0 or p.stats.goals > 0]
+        
+        # Сортируем по порядку ходов (используем историю матча)
+        if match and played_players:
+            # Получаем порядок из использованных игроков
+            used_order = match.get_used_players(team.manager_id)
+            
+            def get_turn_order(player):
+                try:
+                    return used_order.index(player.id)
+                except (ValueError, AttributeError):
+                    return 999
+            
+            played_players = sorted(played_players, key=get_turn_order)
+        
         if played_players:
-            lines.append("\n<b>Игроки:</b>")
-            for p in played_players:
+            lines.append("\n<b>Игроки (по ходам):</b>")
+            for i, p in enumerate(played_players, 1):
                 stats_str = []
                 if p.stats.saves > 0:
                     stats_str.append(f"{p.stats.saves} отб")
@@ -148,7 +159,7 @@ class MatchRenderer:
                 if p.stats.goals > 0:
                     stats_str.append(f"{p.stats.goals} гол")
                 
-                player_line = f"  • {p.name}: {', '.join(stats_str)}"
+                player_line = f"  {i}. {p.name}: {', '.join(stats_str)}"
                 
                 # Добавляем эффекты карточек
                 if match:

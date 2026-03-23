@@ -293,6 +293,39 @@ class GameEngine:
         
         return match
     
+    def cancel_turn_bets(self, match: Match, manager_id: UUID) -> Match:
+        """Отменить все ставки менеджера в текущем ходе"""
+        if not match.current_turn:
+            raise ValueError("Ход не начат")
+        
+        if match.current_turn.dice_rolled:
+            raise ValueError("Кубик уже брошен, отменить нельзя")
+        
+        is_m1 = manager_id == match.manager1_id
+        
+        if is_m1:
+            if match.current_turn.manager1_ready:
+                raise ValueError("Ставки уже подтверждены")
+            
+            # Удаляем ставки из матча
+            bet_ids = match.current_turn.manager1_bets
+            match.bets = [b for b in match.bets if b.id not in bet_ids]
+            
+            # Очищаем список ставок хода
+            match.current_turn.manager1_bets = []
+            match.current_turn.manager1_player_id = None
+        else:
+            if match.current_turn.manager2_ready:
+                raise ValueError("Ставки уже подтверждены")
+            
+            bet_ids = match.current_turn.manager2_bets
+            match.bets = [b for b in match.bets if b.id not in bet_ids]
+            
+            match.current_turn.manager2_bets = []
+            match.current_turn.manager2_player_id = None
+        
+        return match
+    
     def can_roll_dice(self, match: Match) -> Tuple[bool, str]:
         """Проверить, можно ли бросить кубик (оба готовы?)"""
         if not match.current_turn:

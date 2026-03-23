@@ -55,6 +55,16 @@ async def _render_game_screen(callback: CallbackQuery, state: FSMContext, show_s
     # Информация о ходе
     if match.current_turn:
         text += "\n\n" + renderer.render_turn_info_simultaneous(match, user.id)
+        
+        # Показываем выбранного игрока если есть
+        is_user_m1 = match.manager1_id == user.id
+        player_id = match.current_turn.manager1_player_id if is_user_m1 else match.current_turn.manager2_player_id
+        
+        if player_id:
+            team = match.team1 if is_user_m1 else match.team2
+            player = team.get_player_by_id(player_id) if team else None
+            if player:
+                text += f"\n\n🎯 <b>Выбран игрок:</b> {player.name} ({player.position.value})"
     
     # Статистика команд
     if show_stats and match.team1 and match.team2:
@@ -124,6 +134,7 @@ async def cb_make_bet(callback: CallbackQuery, state: FSMContext):
     """Начать создание ставки"""
     data = await state.get_data()
     match_id = data.get("match_id")
+    current_bet_player_id = data.get("current_bet_player_id")  # Уже выбранный игрок
     
     storage = get_storage()
     user = storage.get_or_create_user(
@@ -147,8 +158,42 @@ async def cb_make_bet(callback: CallbackQuery, state: FSMContext):
         if not is_user_m1 and turn.manager2_ready:
             await callback.answer("Вы уже подтвердили ставки!", show_alert=True)
             return
+        
+        # Проверяем, есть ли уже выбранный игрок в текущем ходе
+        if is_user_m1 and turn.manager1_player_id:
+            current_bet_player_id = str(turn.manager1_player_id)
+        elif not is_user_m1 and turn.manager2_player_id:
+            current_bet_player_id = str(turn.manager2_player_id)
     
-    # Получаем доступных игроков
+    # Если игрок уже выбран — сразу к выбору типа ставки
+    if current_bet_player_id:
+        team = match.get_team(user.id)
+        player = team.get_player_by_id(UUID(current_bet_player_id)) if team else None
+        
+        if player:
+            available_types = storage.engine.get_available_bet_types(match, user.id, UUID(current_bet_player_id))
+            
+            if not available_types:
+                await callback.answer("Нет доступных типов ставок", show_alert=True)
+                return
+            
+            await state.update_data(bet_player_id=current_bet_player_id)
+            await state.set_state(MatchStates.selecting_bet_type)
+            
+            # Показываем имя игрока
+            await callback.message.edit_text(
+                f"🎯 <b>Игрок: {player.name}</b>\n"
+                f"<i>({player.position.value})</i>\n\n"
+                "Выберите тип ставки:\n\n"
+                "• <b>Чёт/Нечёт</b> → Отбития\n"
+                "• <b>Больше/Меньше</b> → Передачи\n"
+                "• <b>Точное число</b> → Гол",
+                reply_markup=Keyboards.bet_type_select(available_types)
+            )
+            await callback.answer()
+            return
+    
+    # Иначе — выбор игрока
     available_players = storage.engine.get_available_players(match, user.id)
     
     if not available_players:
@@ -358,33 +403,62 @@ async def cb_confirm_bets(callback: CallbackQuery, state: FSMContext):
         match = _bot_make_bets(storage, match)
         storage.save_match(match)
     
-    # Проверяем, можно ли бросить кубик
+    # Проверяем, можно ли бросить кубик (оба готовы)
     can_roll, reason = storage.engine.can_roll_dice(match)
     
     if can_roll:
-        await callback.answer("✅ Ставки подтверждены! Бросаем кубик...")
-        # Автоматически бросаем кубик
-        match, dice_value, won_bets = storage.engine.roll_dice(match)
-        storage.save_match(match)
-        
+        # СНАЧАЛА показываем ставки обоих игроков
         renderer = MatchRenderer()
+        bets_text = renderer.render_both_bets_before_roll(match, user.id)
         
-        # Показываем результат
-        text = renderer.render_dice_result_simultaneous(dice_value, won_bets, match, user.id)
-        
-        # Карточки уже вытянуты автоматически
-        cards_text = renderer.render_cards_drawn(match, user.id)
-        if cards_text:
-            text += "\n\n" + cards_text
-        
-        # Добавляем кнопки для завершения хода
         await callback.message.edit_text(
-            text,
-            reply_markup=Keyboards.game_actions_after_roll()
+            bets_text,
+            reply_markup=Keyboards.roll_dice_button()
         )
+        await state.set_state(MatchStates.waiting_roll)
+        await callback.answer("✅ Ставки подтверждены!")
     else:
         await callback.answer("✅ Ставки подтверждены! Ожидаем соперника...")
         await _render_game_screen(callback, state)
+
+
+@router.callback_query(F.data == "roll_dice", MatchStates.waiting_roll)
+async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
+    """Бросить кубик"""
+    data = await state.get_data()
+    match_id = data.get("match_id")
+    
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    match = storage.get_match(UUID(match_id))
+    if not match:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    # Бросаем кубик
+    match, dice_value, won_bets = storage.engine.roll_dice(match)
+    storage.save_match(match)
+    
+    renderer = MatchRenderer()
+    
+    # Показываем результат
+    text = renderer.render_dice_result_simultaneous(dice_value, won_bets, match, user.id)
+    
+    # Карточки уже вытянуты автоматически
+    cards_text = renderer.render_cards_drawn(match, user.id)
+    if cards_text:
+        text += "\n\n" + cards_text
+    
+    await state.set_state(MatchStates.in_game)
+    await callback.message.edit_text(
+        text,
+        reply_markup=Keyboards.game_actions_after_roll()
+    )
+    await callback.answer(f"🎲 Выпало: {dice_value}!")
 
 
 @router.callback_query(F.data == "end_turn", MatchStates.in_game)

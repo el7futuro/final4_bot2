@@ -178,6 +178,59 @@ class MatchRenderer:
         return "\n".join(lines)
     
     @staticmethod
+    def render_both_bets_before_roll(match: Match, viewer_id) -> str:
+        """Отрендерить ставки ОБОИХ игроков перед броском кубика"""
+        if not match.current_turn:
+            return "Ход не начат"
+        
+        turn = match.current_turn
+        lines = [
+            f"🎲 <b>Ход {turn.turn_number} — Ставки сделаны!</b>",
+            "",
+        ]
+        
+        is_user_m1 = match.manager1_id == viewer_id
+        
+        # Ставки пользователя
+        user_player_id = turn.manager1_player_id if is_user_m1 else turn.manager2_player_id
+        user_bets_ids = turn.manager1_bets if is_user_m1 else turn.manager2_bets
+        
+        user_team = match.team1 if is_user_m1 else match.team2
+        user_player = user_team.get_player_by_id(user_player_id) if user_team and user_player_id else None
+        
+        lines.append("🔵 <b>Ваши ставки:</b>")
+        if user_player:
+            lines.append(f"   Игрок: {user_player.name}")
+        
+        for bet_id in user_bets_ids:
+            bet = next((b for b in match.bets if b.id == bet_id), None)
+            if bet:
+                lines.append(f"   • {bet.bet_type.value}: {bet.get_display_value()}")
+        
+        lines.append("")
+        
+        # Ставки соперника (бота)
+        opp_player_id = turn.manager2_player_id if is_user_m1 else turn.manager1_player_id
+        opp_bets_ids = turn.manager2_bets if is_user_m1 else turn.manager1_bets
+        
+        opp_team = match.team2 if is_user_m1 else match.team1
+        opp_player = opp_team.get_player_by_id(opp_player_id) if opp_team and opp_player_id else None
+        
+        lines.append("🔴 <b>Ставки соперника:</b>")
+        if opp_player:
+            lines.append(f"   Игрок: {opp_player.name}")
+        
+        for bet_id in opp_bets_ids:
+            bet = next((b for b in match.bets if b.id == bet_id), None)
+            if bet:
+                lines.append(f"   • {bet.bet_type.value}: {bet.get_display_value()}")
+        
+        lines.append("")
+        lines.append("Нажмите кнопку, чтобы бросить кубик!")
+        
+        return "\n".join(lines)
+    
+    @staticmethod
     def render_turn_info(match: Match, viewer_id) -> str:
         """Отрендерить информацию о текущем ходе (legacy)"""
         if not match.current_turn:

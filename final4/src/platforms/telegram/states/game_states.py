@@ -21,6 +21,7 @@ class MatchStates(StatesGroup):
     selecting_bet_player = State()
     selecting_bet_type = State()
     selecting_bet_value = State()
+    waiting_roll = State()  # Ожидание броска кубика (показаны ставки)
     
     # Карточки
     applying_card = State()

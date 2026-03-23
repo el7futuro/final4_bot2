@@ -222,6 +222,16 @@ class Keyboards:
         return builder.as_markup()
     
     @staticmethod
+    def roll_dice_button() -> InlineKeyboardMarkup:
+        """Кнопка броска кубика (после показа ставок)"""
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(
+            text="🎲 Бросить кубик!",
+            callback_data="roll_dice"
+        ))
+        return builder.as_markup()
+    
+    @staticmethod
     def bet_player_select(players: List[Player]) -> InlineKeyboardMarkup:
         """Выбор игрока для ставки"""
         builder = InlineKeyboardBuilder()

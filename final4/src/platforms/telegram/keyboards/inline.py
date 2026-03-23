@@ -30,7 +30,6 @@ class Keyboards:
             InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard")
         )
         builder.row(
-            InlineKeyboardButton(text="⚙️ Команда", callback_data="team_menu"),
             InlineKeyboardButton(text="❓ Правила", callback_data="rules")
         )
         return builder.as_markup()

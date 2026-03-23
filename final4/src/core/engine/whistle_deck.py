@@ -86,8 +86,8 @@ class WhistleDeck:
         # === ДЕЙСТВУЮТ НА СОПЕРНИКА ТЕКУЩЕГО ХОДА ===
         elif card.card_type == CardType.OWN_GOAL:
             # Автогол: игрок СОПЕРНИКА текущего хода получает +1 гол
+            # target_player_id уже указывает на игрока соперника
             effect.target_player_id = target_player_id
-            effect.target_manager_id = match.get_opponent_id(manager_id)
             effect.goals_added = 1
         
         elif card.card_type == CardType.OFFSIDE:
@@ -113,9 +113,20 @@ class WhistleDeck:
             effect.player_removed = True
         
         elif card.card_type == CardType.YELLOW_CARD:
-            # Предупреждение: игрок СОПЕРНИКА теряет 1 действие (выбирает соперник)
+            # Предупреждение: игрок СОПЕРНИКА теряет 1 случайное действие
             effect.target_player_id = target_player_id
-            # Конкретное действие выбирается отдельно
+            # Автоматически выбираем какое действие снять (приоритет: гол > передача > отбитие)
+            if target_player_id:
+                opponent_team = match.team2 if manager_id == match.manager1_id else match.team1
+                if opponent_team:
+                    opp_player = opponent_team.get_player_by_id(target_player_id)
+                    if opp_player:
+                        if opp_player.stats.goals > 0:
+                            effect.goals_removed = 1
+                        elif opp_player.stats.passes > 0:
+                            effect.passes_removed = 1
+                        elif opp_player.stats.saves > 0:
+                            effect.saves_removed = 1
         
         # === ОСОБЫЕ ===
         elif card.card_type == CardType.PENALTY:

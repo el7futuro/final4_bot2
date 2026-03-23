@@ -263,7 +263,7 @@ class MatchRenderer:
     
     @staticmethod
     def render_match_result(match: Match, viewer_id) -> str:
-        """Отрендерить результат матча"""
+        """Отрендерить результат матча с статистикой карточек"""
         if not match.result:
             return "Результат не определён"
         
@@ -290,6 +290,23 @@ class MatchRenderer:
         
         if match.result.decided_by_lottery:
             lines.append("(жребий)")
+        
+        # Статистика карточек Свисток
+        lines.append("")
+        lines.append("🃏 <b>Карточки Свисток:</b>")
+        
+        card_counts = {}
+        for card in match.whistle_cards_drawn:
+            card_name = card.get_display_name()
+            card_counts[card_name] = card_counts.get(card_name, 0) + 1
+        
+        if card_counts:
+            for card_name, count in sorted(card_counts.items(), key=lambda x: -x[1]):
+                lines.append(f"   • {card_name}: {count}")
+        else:
+            lines.append("   Карточки не выпадали")
+        
+        lines.append(f"   <i>Всего вытянуто: {len(match.whistle_cards_drawn)}</i>")
         
         return "\n".join(lines)
     

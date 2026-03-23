@@ -47,13 +47,22 @@ async def cb_play_bot(callback: CallbackQuery, state: FSMContext):
     
     # Создаём команды (16 игроков каждая) и сразу присоединяем
     from src.core.engine.game_engine import BOT_USER_ID
+    import copy
     
-    # Команда пользователя
-    user_team = storage.get_user_team(user.id)
-    if not user_team:
-        user_team = storage._create_default_team(user.id, user.username)
+    # Команда пользователя — КОПИРУЕМ и сбрасываем статистику
+    user_team_template = storage.get_user_team(user.id)
+    if not user_team_template:
+        user_team_template = storage._create_default_team(user.id, user.username)
     
-    # Команда бота
+    user_team = copy.deepcopy(user_team_template)
+    # Сбрасываем статистику всех игроков
+    for player in user_team.players:
+        player.stats.saves = 0
+        player.stats.passes = 0
+        player.stats.goals = 0
+        player.is_available = True
+    
+    # Команда бота (всегда новая)
     bot_team = _create_bot_team()
     
     # Устанавливаем команды БЕЗ формации (None = динамическая)

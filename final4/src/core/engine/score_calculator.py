@@ -69,8 +69,8 @@ class ScoreCalculator:
             return own_goals
         else:
             # Оборона устояла частично
-            # Оставшиеся отбития гасят голы (2 отбития = 1 гол)
-            goals_blocked = (remaining_saves + 1) // 2
+            # Оставшиеся отбития гасят голы (1 отбитие = 1 гол)
+            goals_blocked = remaining_saves
             return max(0, own_goals - goals_blocked)
     
     def get_score_explanation(
@@ -96,11 +96,11 @@ class ScoreCalculator:
                 f"ИТОГО забито: {own_goals}",
             ])
         else:
-            blocked = (remaining_saves + 1) // 2
+            blocked = remaining_saves
             total = max(0, own_goals - blocked)
             lines.extend([
                 f"Остаток отбитий: {remaining_saves}",
-                f"Отбития гасят голы: ({remaining_saves} + 1) // 2 = {blocked}",
+                f"Отбития гасят голы: {remaining_saves} (1:1)",
                 f"Ваши голы: {own_goals}",
                 f"ИТОГО забито: max(0, {own_goals} - {blocked}) = {total}",
             ])

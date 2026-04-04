@@ -171,6 +171,26 @@ class MatchHistory(BaseModel):
             total["goals"] += p.goals
         return total
     
+    def get_total_stats_by_phase(
+        self, 
+        manager_id: UUID, 
+        match_manager1_id: UUID,
+        phase: MatchPhase
+    ) -> Dict[str, int]:
+        """
+        Получить суммарную статистику команды ТОЛЬКО за указанную фазу.
+        
+        Для Extra Time — учитываем только игроков, которые играли в ET.
+        """
+        players = self.manager1_players if manager_id == match_manager1_id else self.manager2_players
+        total = {"saves": 0, "passes": 0, "goals": 0}
+        for p in players.values():
+            if p.phase_played == phase:
+                total["saves"] += p.saves
+                total["passes"] += p.passes
+                total["goals"] += p.goals
+        return total
+    
     def get_players_with_passes(self, manager_id: UUID, match_manager1_id: UUID) -> List[PlayerMatchStats]:
         """Получить игроков с передачами (для пенальти)"""
         players = self.manager1_players if manager_id == match_manager1_id else self.manager2_players

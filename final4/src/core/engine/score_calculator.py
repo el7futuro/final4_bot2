@@ -1,8 +1,13 @@
 # src/core/engine/score_calculator.py
 """Расчёт итогового счёта матча"""
 
+from typing import Optional, TYPE_CHECKING
+
 from ..models.team import Team
-from ..models.match import MatchScore
+from ..models.match import MatchScore, MatchPhase
+
+if TYPE_CHECKING:
+    from ..models.match_history import MatchHistory
 
 
 class ScoreCalculator:
@@ -41,6 +46,49 @@ class ScoreCalculator:
             own_passes=team2.stats.total_passes,
             own_goals=team2.stats.total_goals,
             opponent_saves=team1.stats.total_saves
+        )
+        
+        return MatchScore(manager1_goals=goals1, manager2_goals=goals2)
+    
+    def calculate_score_from_history(
+        self,
+        history: 'MatchHistory',
+        manager1_id,
+        manager2_id,
+        phase: Optional[MatchPhase] = None
+    ) -> MatchScore:
+        """
+        Рассчитать счёт на основе истории матча.
+        
+        Если указана фаза — считает ТОЛЬКО статистику этой фазы.
+        Это критично для Дополнительного Времени, где победитель
+        определяется ТОЛЬКО по действиям в ET, без учёта Main Time.
+        
+        Args:
+            history: История матча
+            manager1_id: ID менеджера 1
+            manager2_id: ID менеджера 2
+            phase: Фаза матча (если None — все фазы)
+        """
+        if phase is not None:
+            stats1 = history.get_total_stats_by_phase(manager1_id, manager1_id, phase)
+            stats2 = history.get_total_stats_by_phase(manager2_id, manager1_id, phase)
+        else:
+            stats1 = history.get_total_stats(manager1_id, manager1_id)
+            stats2 = history.get_total_stats(manager2_id, manager1_id)
+        
+        # Голы team1 против обороны team2
+        goals1 = self._calculate_goals_scored(
+            own_passes=stats1["passes"],
+            own_goals=stats1["goals"],
+            opponent_saves=stats2["saves"]
+        )
+        
+        # Голы team2 против обороны team1
+        goals2 = self._calculate_goals_scored(
+            own_passes=stats2["passes"],
+            own_goals=stats2["goals"],
+            opponent_saves=stats1["saves"]
         )
         
         return MatchScore(manager1_goals=goals1, manager2_goals=goals2)

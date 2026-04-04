@@ -779,13 +779,34 @@ class GameEngine:
         return match
     
     def _end_extra_time(self, match: Match) -> Match:
-        """Завершить дополнительное время"""
-        if match.team1 and match.team2:
-            score = self.score_calculator.calculate_score(match.team1, match.team2)
+        """
+        Завершить дополнительное время.
+        
+        ВАЖНО: Победитель Extra Time определяется ТОЛЬКО по действиям в ET!
+        Статистика Main Time НЕ учитывается.
+        """
+        history = self.get_match_history(match)
+        
+        if history:
+            # Используем ТОЛЬКО статистику Extra Time
+            score = self.score_calculator.calculate_score_from_history(
+                history, 
+                match.manager1_id, 
+                match.manager2_id,
+                phase=MatchPhase.EXTRA_TIME
+            )
             match.score = score
             
             if score.manager1_goals != score.manager2_goals:
                 return self._finish_match(match, MatchPhase.EXTRA_TIME)
+        else:
+            # Fallback на старый метод (без истории)
+            if match.team1 and match.team2:
+                score = self.score_calculator.calculate_score(match.team1, match.team2)
+                match.score = score
+                
+                if score.manager1_goals != score.manager2_goals:
+                    return self._finish_match(match, MatchPhase.EXTRA_TIME)
         
         # Всё ещё ничья — пенальти
         match.phase = MatchPhase.PENALTIES

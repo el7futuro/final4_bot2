@@ -242,9 +242,19 @@ class Keyboards:
         """Выбор для пенальти: Больше или Меньше"""
         builder = InlineKeyboardBuilder()
         builder.row(
-            InlineKeyboardButton(text="⬇️ Меньше (1-3)", callback_data="penalty:low"),
-            InlineKeyboardButton(text="⬆️ Больше (4-6)", callback_data="penalty:high")
+            InlineKeyboardButton(text="⬇️ Меньше (1-3)", callback_data="penalty_choice:low"),
+            InlineKeyboardButton(text="⬆️ Больше (4-6)", callback_data="penalty_choice:high")
         )
+        return builder.as_markup()
+    
+    @staticmethod
+    def penalty_roll_button() -> InlineKeyboardMarkup:
+        """Кнопка броска кубика для пенальти"""
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(
+            text="🎲 Бросить кубик!",
+            callback_data="penalty_roll"
+        ))
         return builder.as_markup()
     
     @staticmethod

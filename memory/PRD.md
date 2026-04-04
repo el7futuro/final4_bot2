@@ -18,8 +18,10 @@
 
 ### Дополнительное время (5 ходов)
 - Все 5 ходов — ПОЛЕВЫЕ игроки (вратарь уже использован)
-- **ОБЯЗАТЕЛЬНО**: 1 ставка на гол + 1 на чёт/нечёт или больше/меньше
+- **ОБЯЗАТЕЛЬНО**: 1 ставка на гол + 1 позиционная (чёт/нечёт или больше/меньше)
+- Форварды: гол + больше/меньше (не чёт/нечёт)
 - Лимиты НЕ действуют — каждый может ставить на гол
+- **НОВОЕ (Декабрь 2025)**: Статистика ET считается ОТДЕЛЬНО от Main Time!
 
 ### Колода карточек (40 шт.)
 | Карточка | Кол-во | Цель | Эффект |
@@ -30,7 +32,7 @@
 | Автогол | 1 | Соперник | +1 гол сопернику |
 | ВАР | 2 | Соперник | Отменяет карточку |
 | Офсайд | 2 | Соперник | Отменяет гол |
-| Пенальти | 2 | Особая | Розыгрыш |
+| Пенальти | 2 | Особая | Интерактивный розыгрыш |
 | Удаление | 2 | Соперник | Все действия = 0 |
 | Предупреждение | 3 | Соперник | -1 действие |
 | Фол | 6 | Свой | -1 отбитие |
@@ -43,7 +45,8 @@
 - Позитивные (Хет-трик, Дубль, Гол, Перехват, Отбор) → свой игрок
 - Негативные (Фол, Потеря) → свой игрок
 - Действуют на соперника → игрок соперника текущего хода
-- **НОВОЕ**: Эффекты карточек записываются в `MatchHistory`
+- Эффекты карточек записываются в `MatchHistory`
+- **НОВОЕ**: Пенальти — интерактивный UI (выбор High/Low → кнопка "Бросить кубик" → результат)
 
 ### Расчёт счёта
 1. Передачи пробивают отбития (1:1)
@@ -62,12 +65,13 @@
 - Интеграция с `WhistleDeck.apply_effect()` — запись карточных эффектов
 - Колода с учётом использованных карточек
 - История изменений действий с причинами
+- **НОВОЕ**: `get_total_stats_by_phase()` — статистика по фазе (MT/ET)
 
 ---
 
 ## Тестирование
 
-**56 unit-тестов проходят** ✅
+**61 unit-тест проходит** ✅
 
 ```bash
 cd /app/final4 && python -m pytest tests/unit/core/ -v
@@ -76,63 +80,68 @@ cd /app/final4 && python -m pytest tests/unit/core/ -v
 Тестовые файлы:
 - `test_bet_tracker.py` — правила ставок
 - `test_extra_time.py` — дополнительное время
+- `test_extra_time_stats.py` — **НОВЫЙ**: изоляция статистики ET (5 тестов)
 - `test_game_engine.py` — движок игры
 - `test_simultaneous_betting.py` — одновременные ставки
-- `test_match_history.py` — **НОВЫЙ**: отслеживание статистики
+- `test_match_history.py` — отслеживание статистики
 
 ---
 
-## Симуляция матча
+## Telegram MVP Бот
+
+**Бот:** `@Final_4_bot`
 
 ```bash
-cd /app/final4 && python scripts/simulate_match.py
+cd /app/final4 && python scripts/run_bot.py
 ```
 
-Симуляция включает:
-- Основное время (11 ходов)
-- Дополнительное время (5 ходов)
-- Серия пенальти (автоматическая)
-- Вывод статистики из `MatchHistory`
+### Исправления (Декабрь 2025):
+
+1. ✅ **Интерактивная карточка Пенальти**
+   - Выбор High/Low → Кнопка "Бросить кубик" → Показ результата
+   - Новое состояние `MatchStates.penalty_choice_made`
+   - Обновлённые клавиатуры `penalty_choice()` и `penalty_roll_button()`
+
+2. ✅ **Изоляция статистики Extra Time**
+   - Победитель ET определяется ТОЛЬКО по действиям в ET
+   - `calculate_extra_time_score()` — считает только игроков ET
+   - `calculate_score_from_history(phase=EXTRA_TIME)` — расчёт по фазе
+
+3. ✅ **Правила ставок Extra Time**
+   - Если первая ставка НЕ на гол → вторая ОБЯЗАТЕЛЬНО на гол
+   - Если первая на гол → вторая ОБЯЗАТЕЛЬНО позиционная
+   - Бот корректно переполучает типы ставок после каждой ставки
 
 ---
 
 ## Файлы
 
 ### Core модуль
-- `/app/final4/src/core/models/match_history.py` — история матча
-- `/app/final4/src/core/engine/bet_tracker.py` — правила ставок
-- `/app/final4/src/core/engine/whistle_deck.py` — карточки (обновлён: запись в историю)
-- `/app/final4/src/core/engine/score_calculator.py` — расчёт счёта
-- `/app/final4/src/core/engine/game_engine.py` — движок (обновлён: интеграция MatchHistory)
+- `/app/final4/src/core/models/match_history.py` — история матча (+ `get_total_stats_by_phase`)
+- `/app/final4/src/core/engine/bet_tracker.py` — правила ставок (обновлён для ET)
+- `/app/final4/src/core/engine/score_calculator.py` — расчёт счёта (+ `calculate_score_from_history`)
+- `/app/final4/src/core/engine/game_engine.py` — движок (обновлён: изоляция ET)
+
+### Telegram платформа
+- `/app/final4/src/platforms/telegram/handlers/game.py` — интерактивный пенальти
+- `/app/final4/src/platforms/telegram/renderers/match_renderer.py` — `calculate_extra_time_score()`
+- `/app/final4/src/platforms/telegram/keyboards/inline.py` — `penalty_roll_button()`
+- `/app/final4/src/platforms/telegram/states/game_states.py` — `penalty_choice_made`
 
 ### Тесты
-- `/app/final4/tests/unit/core/test_match_history.py` — **НОВЫЙ**: 13 тестов
+- `/app/final4/tests/unit/core/test_extra_time_stats.py` — **НОВЫЙ**: 5 тестов
 
 ---
 
 ## 🟡 Предстоящие задачи
 
-### P0 (Критично)
-1. ✅ ~~Интеграция `MatchHistory` в `GameEngine`~~ — ЗАВЕРШЕНО
-2. ✅ ~~Полное тестирование игрового цикла~~ — ЗАВЕРШЕНО
-   - Main Time победа ✅
-   - Extra Time победа ✅
-   - Пенальти (автоматические) ✅
-   - Порядок пенальти (ET → MT обратный) ✅
-   - Запись карточек в историю ✅
-
 ### P1 (Важно)
-3. ✅ ~~Telegram адаптер~~ — ЗАВЕРШЕНО (MVP)
-   - In-memory хранилище (без PostgreSQL/Redis)
-   - Полный игровой цикл
-   - Игра против бота
-   - Одновременные ставки
-   - Карточки Свисток
-4. PostgreSQL миграции (Alembic)
+1. PostgreSQL миграции (Alembic)
+2. Полное E2E тестирование бота через Telegram
 
 ### P2 (Можно позже)
-5. VK и Discord адаптеры
-6. REST API слой
+3. VK и Discord адаптеры
+4. REST API слой
 
 ---
 

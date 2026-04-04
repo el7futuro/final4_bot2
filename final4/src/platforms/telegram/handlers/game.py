@@ -508,7 +508,7 @@ async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
                 break
         
         if penalty_owner == BOT_USER_ID:
-            # Пенальти бота — автоматический выбор
+            # Пенальти бота — автоматический выбор и бросок
             import random
             bot_choice = random.choice(["high", "low"])
             match, success, pen_dice = storage.engine.resolve_penalty(match, BOT_USER_ID, bot_choice)
@@ -516,19 +516,19 @@ async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
             
             choice_text = "Больше" if bot_choice == "high" else "Меньше"
             if success:
-                text += f"\n\n⚽ <b>ПЕНАЛЬТИ БОТА!</b>\nБот выбрал: {choice_text}\n🎲 Выпало: {pen_dice}\n❌ Бот забил!"
+                text += f"\n\n⚽ <b>ПЕНАЛЬТИ БОТА!</b>\nБот выбрал: {choice_text}\n🎲 Выпало: {pen_dice}\n❌ Бот забил гол!"
             else:
                 text += f"\n\n⚽ <b>ПЕНАЛЬТИ БОТА!</b>\nБот выбрал: {choice_text}\n🎲 Выпало: {pen_dice}\n✅ Вы отбили!"
         else:
-            # Пенальти пользователя — показываем выбор
-            text += "\n\n⚽ <b>ПЕНАЛЬТИ!</b>\nВыберите: Больше (4-6) или Меньше (1-3)?"
+            # Пенальти пользователя — показываем выбор High/Low
+            text += "\n\n⚽ <b>ПЕНАЛЬТИ!</b>\nВыберите, куда бьёте:"
             
             await state.set_state(MatchStates.penalty_kick)
             await callback.message.edit_text(
                 text,
                 reply_markup=Keyboards.penalty_choice()
             )
-            await callback.answer("⚽ Пенальти!")
+            await callback.answer("⚽ У вас пенальти!")
             return
     
     await state.set_state(MatchStates.in_game)
@@ -539,13 +539,36 @@ async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
     await callback.answer(f"🎲 Выпало: {dice_value}!")
 
 
-@router.callback_query(F.data.startswith("penalty:"), MatchStates.penalty_kick)
+@router.callback_query(F.data.startswith("penalty_choice:"), MatchStates.penalty_kick)
 async def cb_penalty_choice(callback: CallbackQuery, state: FSMContext):
-    """Выбор для пенальти"""
+    """Выбор High/Low для пенальти — показываем кнопку броска"""
     choice = callback.data.split(":")[1]  # "high" или "low"
     
+    # Сохраняем выбор в состояние
+    await state.update_data(penalty_choice=choice)
+    await state.set_state(MatchStates.penalty_choice_made)
+    
+    choice_text = "⬆️ Больше (4-6)" if choice == "high" else "⬇️ Меньше (1-3)"
+    
+    await callback.message.edit_text(
+        f"⚽ <b>ПЕНАЛЬТИ!</b>\n\n"
+        f"Ваш выбор: <b>{choice_text}</b>\n\n"
+        f"Нажмите кнопку, чтобы бросить кубик!",
+        reply_markup=Keyboards.penalty_roll_button()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "penalty_roll", MatchStates.penalty_choice_made)
+async def cb_penalty_roll(callback: CallbackQuery, state: FSMContext):
+    """Бросок кубика для пенальти"""
     data = await state.get_data()
     match_id = data.get("match_id")
+    choice = data.get("penalty_choice")
+    
+    if not choice:
+        await callback.answer("Ошибка: выбор не сохранён", show_alert=True)
+        return
     
     storage = get_storage()
     user = storage.get_or_create_user(
@@ -565,26 +588,30 @@ async def cb_penalty_choice(callback: CallbackQuery, state: FSMContext):
         await callback.answer(str(e), show_alert=True)
         return
     
-    # Формируем результат
+    # Формируем результат с визуальным броском
+    dice_emoji = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
     choice_text = "Больше (4-6)" if choice == "high" else "Меньше (1-3)"
     
+    result_text = f"⚽ <b>ПЕНАЛЬТИ!</b>\n\n"
+    result_text += f"Ваш выбор: <b>{choice_text}</b>\n\n"
+    result_text += f"🎲 Бросок: <b>{dice_emoji[dice_value]} {dice_value}</b>\n\n"
+    
     if success:
-        result_text = f"🎲 Выпало: {dice_value}\n✅ <b>ГОЛ!</b> Вы угадали ({choice_text})!"
+        result_text += "✅ <b>ГОЛ!</b> Вы угадали!"
     else:
-        result_text = f"🎲 Выпало: {dice_value}\n❌ <b>Промах!</b> Вратарь отбил ({choice_text})"
+        result_text += "❌ <b>Промах!</b> Вратарь отбил!"
     
     renderer = MatchRenderer()
-    text = renderer.render_match_status(match, user.id)
-    text += "\n\n" + result_text
+    status_text = renderer.render_match_status(match, user.id)
     
     # Карточки
     cards_text = renderer.render_cards_drawn(match, user.id)
     if cards_text:
-        text += "\n\n" + cards_text
+        result_text += "\n\n" + cards_text
     
     await state.set_state(MatchStates.in_game)
     await callback.message.edit_text(
-        text,
+        status_text + "\n\n" + result_text,
         reply_markup=Keyboards.game_actions_after_roll()
     )
     await callback.answer("⚽ ГОЛ!" if success else "❌ Промах!")
@@ -675,23 +702,17 @@ def _bot_make_bets(storage, match):
     # Выбираем случайного игрока
     player = random.choice(available)
     
-    # Получаем доступные типы ставок
-    available_types = engine.get_available_bet_types(match, BOT_USER_ID, player.id)
-    if not available_types:
-        return match
-    
     # Определяем количество ставок
     turn_num = match.current_turn.turn_number if match.current_turn else 1
     required_bets = 1 if turn_num == 1 else 2
     
-    used_types = []
-    for i in range(min(required_bets, len(available_types))):
-        remaining = [t for t in available_types if t not in used_types]
-        if not remaining:
+    for i in range(required_bets):
+        # Получаем доступные типы КАЖДЫЙ раз (они меняются после первой ставки, особенно в ET)
+        available_types = engine.get_available_bet_types(match, BOT_USER_ID, player.id)
+        if not available_types:
             break
         
-        bet_type = random.choice(remaining)
-        used_types.append(bet_type)
+        bet_type = random.choice(available_types)
         
         # Создаём ставку со всеми параметрами СРАЗУ
         bet_params = {

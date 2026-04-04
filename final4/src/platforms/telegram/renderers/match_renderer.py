@@ -43,9 +43,16 @@ class MatchRenderer:
         
         if match.status in [MatchStatus.IN_PROGRESS, MatchStatus.EXTRA_TIME]:
             # Рассчитываем текущий счёт
-            score1, score2, details = MatchRenderer.calculate_current_score(match)
-            lines.append(f"\n📊 <b>Счёт: {score1}:{score2}</b>")
-            lines.append(f"<i>{details}</i>")
+            if match.phase == MatchPhase.EXTRA_TIME:
+                # В Extra Time показываем ТОЛЬКО счёт ET
+                score1, score2, details = MatchRenderer.calculate_extra_time_score(match)
+                lines.append(f"\n⏱ <b>Счёт ET: {score1}:{score2}</b>")
+                lines.append(f"<i>{details}</i>")
+                lines.append(f"<i>(Только статистика дополнительного времени!)</i>")
+            else:
+                score1, score2, details = MatchRenderer.calculate_current_score(match)
+                lines.append(f"\n📊 <b>Счёт: {score1}:{score2}</b>")
+                lines.append(f"<i>{details}</i>")
         
         return "\n".join(lines)
     
@@ -112,6 +119,71 @@ class MatchRenderer:
                 canceled = remaining_saves1 // 2
                 if canceled > 0:
                     d2 += f", -{canceled}⚽ (голы съели {canceled*2} отб)"
+            details_parts.append(d2)
+        
+        details = " | ".join(details_parts) if details_parts else "0:0"
+        
+        return goals1, goals2, details
+    
+    @staticmethod
+    def calculate_extra_time_score(match: Match) -> tuple:
+        """
+        Рассчитать счёт ТОЛЬКО для Extra Time.
+        
+        ВАЖНО: В ET учитываются ТОЛЬКО действия игроков, которые играли в ET!
+        Статистика Main Time НЕ влияет на победителя ET.
+        
+        Возвращает: (голы_команды1, голы_команды2, детали_расчёта)
+        """
+        if not match.team1 or not match.team2:
+            return 0, 0, ""
+        
+        from src.core.models.match import MatchPhase
+        
+        # Собираем статистику ТОЛЬКО игроков ET
+        # Проверяем, в какой фазе играл каждый игрок
+        passes1 = 0
+        goals1_raw = 0
+        saves1 = 0
+        
+        passes2 = 0
+        goals2_raw = 0
+        saves2 = 0
+        
+        # Команда 1 — ищем игроков ET
+        for player in match.team1.players:
+            # Проверяем, использован ли игрок в Extra Time
+            player_id_str = str(player.id)
+            if player_id_str in match.used_players_extra_m1:
+                passes1 += player.stats.passes
+                goals1_raw += player.stats.goals
+                saves1 += player.stats.saves
+        
+        # Команда 2 — ищем игроков ET
+        for player in match.team2.players:
+            player_id_str = str(player.id)
+            if player_id_str in match.used_players_extra_m2:
+                passes2 += player.stats.passes
+                goals2_raw += player.stats.goals
+                saves2 += player.stats.saves
+        
+        # Расчёт голов команды 1 (атакует команду 2)
+        remaining_saves2 = max(0, saves2 - passes1)
+        goals1 = max(0, goals1_raw - (remaining_saves2 // 2))
+        
+        # Расчёт голов команды 2 (атакует команду 1)
+        remaining_saves1 = max(0, saves1 - passes2)
+        goals2 = max(0, goals2_raw - (remaining_saves1 // 2))
+        
+        # Формируем детали
+        details_parts = []
+        
+        if passes1 > 0 or goals1_raw > 0 or saves1 > 0:
+            d1 = f"Вы ET: {goals1_raw}⚽, {passes1}🎯, {saves1}🛡"
+            details_parts.append(d1)
+        
+        if passes2 > 0 or goals2_raw > 0 or saves2 > 0:
+            d2 = f"Соп ET: {goals2_raw}⚽, {passes2}🎯, {saves2}🛡"
             details_parts.append(d2)
         
         details = " | ".join(details_parts) if details_parts else "0:0"

@@ -230,7 +230,9 @@ class BetTracker:
         - 2 разных типа из доступных
         
         ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ:
-        - Обязательно: 1 ставка на гол + 1 ставка чёт/нечёт или больше/меньше
+        - Обязательно: 1 ставка на гол + 1 позиционная (чёт/нечёт или больше/меньше)
+        - Форварды: гол + больше/меньше
+        - Остальные: гол + (чёт/нечёт ИЛИ больше/меньше)
         """
         available = []
         
@@ -248,17 +250,34 @@ class BetTracker:
         
         # ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ — особые правила
         if match.phase == MatchPhase.EXTRA_TIME:
-            # Точное число (гол) — всегда доступно в Extra Time
-            available.append(BetType.EXACT_NUMBER)
+            # Проверяем, есть ли уже ставка в этом ходу
+            existing_bet_type = self._get_player_bet_type_this_turn(match, manager_id, player.id)
             
-            # Чёт/нечёт — для всех кроме форвардов
-            if player.position != Position.FORWARD:
-                even_odd_count = self._count_even_odd_bets(match, manager_id)
-                if even_odd_count < 6:
-                    available.append(BetType.EVEN_ODD)
-            
-            # Больше/меньше — всегда
-            available.append(BetType.HIGH_LOW)
+            if existing_bet_type is None:
+                # ПЕРВАЯ ставка — доступны все варианты
+                # Точное число (гол) — всегда доступно в Extra Time
+                available.append(BetType.EXACT_NUMBER)
+                
+                # Чёт/нечёт — для всех кроме форвардов
+                if player.position != Position.FORWARD:
+                    even_odd_count = self._count_even_odd_bets(match, manager_id)
+                    if even_odd_count < 6:
+                        available.append(BetType.EVEN_ODD)
+                
+                # Больше/меньше — всегда
+                available.append(BetType.HIGH_LOW)
+            else:
+                # ВТОРАЯ ставка — зависит от первой
+                if existing_bet_type == BetType.EXACT_NUMBER:
+                    # Первая была на гол → вторая ОБЯЗАТЕЛЬНО позиционная
+                    if player.position != Position.FORWARD:
+                        even_odd_count = self._count_even_odd_bets(match, manager_id)
+                        if even_odd_count < 6:
+                            available.append(BetType.EVEN_ODD)
+                    available.append(BetType.HIGH_LOW)
+                else:
+                    # Первая была НЕ на гол → вторая ОБЯЗАТЕЛЬНО на гол
+                    available.append(BetType.EXACT_NUMBER)
             
             return available
         

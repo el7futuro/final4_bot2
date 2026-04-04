@@ -29,6 +29,7 @@ class MatchStates(StatesGroup):
     
     # Пенальти
     penalty_kick = State()
+    penalty_choice_made = State()  # Выбрал high/low, ждёт броска кубика
 
 
 class ProfileStates(StatesGroup):

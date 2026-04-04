@@ -727,7 +727,7 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
     await callback.answer(f"🎲 Выпало: {dice_value}!")
     
     # Для PvP — уведомляем соперника о результатах хода
-    if match.match_type.value == "pvp":
+    if match.match_type.value == "random":
         await _notify_opponent_turn_result(callback.bot, match, user.id, dice_value, won_bets)
 
 

@@ -487,27 +487,48 @@ async def cb_confirm_bets(callback: CallbackQuery, state: FSMContext):
         renderer = MatchRenderer()
         bets_text = renderer.render_both_bets_before_roll(match, user.id)
         
-        await callback.message.edit_text(
-            bets_text,
-            reply_markup=Keyboards.roll_dice_button()
-        )
-        await state.set_state(MatchStates.waiting_roll)
-        await callback.answer("✅ Ставки подтверждены!")
-        
-        # Для PvP — уведомляем соперника
+        # В PvP — только создатель матча (manager1) бросает кубик
         if match.match_type.value == "random":
-            await _notify_opponent_ready_to_roll(callback.bot, match, user.id)
+            if user.id == match.manager1_id:
+                # Manager1 — показываем кнопку броска
+                await callback.message.edit_text(
+                    bets_text,
+                    reply_markup=Keyboards.roll_dice_button()
+                )
+                await state.set_state(MatchStates.waiting_roll)
+                await callback.answer("✅ Ставки подтверждены! Бросайте кубик!")
+                
+                # Уведомляем manager2 что ждём броска
+                await _notify_opponent_waiting_for_roll(callback.bot, match, user.id)
+            else:
+                # Manager2 — показываем ожидание
+                await callback.message.edit_text(
+                    bets_text + "\n\n⏳ <i>Ожидаем бросок соперника...</i>",
+                    reply_markup=None
+                )
+                await state.set_state(MatchStates.waiting_roll)
+                await callback.answer("✅ Ставки подтверждены! Ожидаем бросок соперника...")
+                
+                # Уведомляем manager1 что можно бросать
+                await _notify_manager1_can_roll(callback.bot, match)
+        else:
+            # VS_BOT — игрок сам бросает
+            await callback.message.edit_text(
+                bets_text,
+                reply_markup=Keyboards.roll_dice_button()
+            )
+            await state.set_state(MatchStates.waiting_roll)
+            await callback.answer("✅ Ставки подтверждены!")
     else:
         await callback.answer("✅ Ставки подтверждены! Ожидаем соперника...")
         await _render_game_screen(callback, state)
 
 
-async def _notify_opponent_ready_to_roll(bot, match, confirming_user_id: UUID):
-    """Уведомить соперника что можно бросать кубик (PvP)"""
+async def _notify_opponent_waiting_for_roll(bot, match, roller_id: UUID):
+    """Уведомить manager2 что ждём броска manager1"""
     storage = get_storage()
     
-    # Определяем соперника
-    opponent_id = match.manager2_id if confirming_user_id == match.manager1_id else match.manager1_id
+    opponent_id = match.manager2_id if roller_id == match.manager1_id else match.manager1_id
     opponent = storage.get_user_by_id(opponent_id)
     
     if not opponent:
@@ -519,12 +540,34 @@ async def _notify_opponent_ready_to_roll(bot, match, confirming_user_id: UUID):
     try:
         await bot.send_message(
             chat_id=opponent.telegram_id,
+            text=bets_text + "\n\n⏳ <i>Ожидаем бросок соперника...</i>",
+            reply_markup=None
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to notify opponent: {e}")
+
+
+async def _notify_manager1_can_roll(bot, match):
+    """Уведомить manager1 что можно бросать кубик"""
+    storage = get_storage()
+    
+    manager1 = storage.get_user_by_id(match.manager1_id)
+    if not manager1:
+        return
+    
+    renderer = MatchRenderer()
+    bets_text = renderer.render_both_bets_before_roll(match, match.manager1_id)
+    
+    try:
+        await bot.send_message(
+            chat_id=manager1.telegram_id,
             text="✅ <b>Соперник подтвердил ставки!</b>\n\n" + bets_text,
             reply_markup=Keyboards.roll_dice_button()
         )
     except Exception as e:
         import logging
-        logging.getLogger(__name__).error(f"Failed to notify opponent: {e}")
+        logging.getLogger(__name__).error(f"Failed to notify manager1: {e}")
 
 
 async def _notify_opponent_turn_result(bot, match, roller_user_id: UUID, dice_value: int, won_bets):
@@ -557,6 +600,39 @@ async def _notify_opponent_turn_result(bot, match, roller_user_id: UUID, dice_va
         logging.getLogger(__name__).error(f"Failed to notify opponent turn result: {e}")
 
 
+@router.callback_query(F.data == "roll_dice")
+async def cb_roll_dice_restore(callback: CallbackQuery, state: FSMContext):
+    """Бросить кубик (с восстановлением состояния)"""
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    # Ищем активный матч
+    match = storage.get_user_active_match(user.id)
+    if not match:
+        await callback.answer("У вас нет активного матча", show_alert=True)
+        return
+    
+    # В PvP только manager1 бросает кубик
+    if match.match_type.value == "random" and user.id != match.manager1_id:
+        await callback.answer("Только создатель матча бросает кубик!", show_alert=True)
+        return
+    
+    # Проверяем, можно ли бросить (может кубик уже брошен)
+    if match.current_turn and match.current_turn.dice_rolled:
+        await callback.answer("Кубик уже брошен в этом ходу!", show_alert=True)
+        return
+    
+    # Восстанавливаем состояние
+    await state.update_data(match_id=str(match.id))
+    await state.set_state(MatchStates.waiting_roll)
+    
+    # Вызываем основную логику
+    await _handle_roll_dice(callback, state, match, user)
+
+
 @router.callback_query(F.data == "roll_dice", MatchStates.waiting_roll)
 async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
     """Бросить кубик"""
@@ -572,6 +648,23 @@ async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
     match = storage.get_match(UUID(match_id))
     if not match:
         await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    # В PvP только manager1 бросает кубик
+    if match.match_type.value == "random" and user.id != match.manager1_id:
+        await callback.answer("Только создатель матча бросает кубик!", show_alert=True)
+        return
+    
+    await _handle_roll_dice(callback, state, match, user)
+
+
+async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, user):
+    """Основная логика броска кубика"""
+    storage = get_storage()
+    
+    # Проверяем, не брошен ли уже кубик
+    if match.current_turn and match.current_turn.dice_rolled:
+        await callback.answer("Кубик уже брошен!", show_alert=True)
         return
     
     # Бросаем кубик

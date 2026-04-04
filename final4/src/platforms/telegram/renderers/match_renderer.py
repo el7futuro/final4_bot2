@@ -77,11 +77,11 @@ class MatchRenderer:
         
         # Расчёт голов команды 1
         remaining_saves2 = max(0, saves2 - passes1)  # Отбития после пробития передачами
-        goals1 = max(0, goals1_raw - remaining_saves2)  # 1 отбитие = 1 гол заблокирован
+        goals1 = max(0, goals1_raw - (remaining_saves2 // 2))  # 1 гол съедает 2 отбития
         
         # Расчёт голов команды 2
         remaining_saves1 = max(0, saves1 - passes2)
-        goals2 = max(0, goals2_raw - remaining_saves1)
+        goals2 = max(0, goals2_raw - (remaining_saves1 // 2))
         
         # Формируем детали
         details_parts = []
@@ -95,9 +95,9 @@ class MatchRenderer:
                 blocked = min(passes1, saves2)
                 d1 += f" (пробито {blocked} отб)"
             if remaining_saves2 > 0 and goals1_raw > 0:
-                canceled = remaining_saves2
+                canceled = remaining_saves2 // 2
                 if canceled > 0:
-                    d1 += f", -{min(canceled, goals1_raw)}⚽ отбито"
+                    d1 += f", -{canceled}⚽ (голы съели {canceled*2} отб)"
             details_parts.append(d1)
         
         # Детали для команды 2
@@ -109,9 +109,9 @@ class MatchRenderer:
                 blocked = min(passes2, saves1)
                 d2 += f" (пробито {blocked} отб)"
             if remaining_saves1 > 0 and goals2_raw > 0:
-                canceled = remaining_saves1
+                canceled = remaining_saves1 // 2
                 if canceled > 0:
-                    d2 += f", -{min(canceled, goals2_raw)}⚽ отбито"
+                    d2 += f", -{canceled}⚽ (голы съели {canceled*2} отб)"
             details_parts.append(d2)
         
         details = " | ".join(details_parts) if details_parts else "0:0"

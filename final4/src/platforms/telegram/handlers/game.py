@@ -140,12 +140,35 @@ async def cb_match_stats(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# Обработчик для восстановления состояния (когда игрок получил уведомление через send_message)
+@router.callback_query(F.data == "make_bet")
+async def cb_make_bet_restore_state(callback: CallbackQuery, state: FSMContext):
+    """Восстановить состояние и начать создание ставки (для PvP уведомлений)"""
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    # Ищем активный матч пользователя
+    match = storage.get_user_active_match(user.id)
+    if not match:
+        await callback.answer("У вас нет активного матча", show_alert=True)
+        return
+    
+    # Восстанавливаем состояние FSM
+    await state.update_data(match_id=str(match.id))
+    await state.set_state(MatchStates.in_game)
+    
+    # Теперь вызываем основную логику
+    await _handle_make_bet(callback, state, match, user)
+
+
 @router.callback_query(F.data == "make_bet", MatchStates.in_game)
 async def cb_make_bet(callback: CallbackQuery, state: FSMContext):
     """Начать создание ставки"""
     data = await state.get_data()
     match_id = data.get("match_id")
-    current_bet_player_id = data.get("current_bet_player_id")  # Уже выбранный игрок
     
     storage = get_storage()
     user = storage.get_or_create_user(
@@ -154,6 +177,19 @@ async def cb_make_bet(callback: CallbackQuery, state: FSMContext):
     )
     
     match = storage.get_match(UUID(match_id))
+    if not match:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    await _handle_make_bet(callback, state, match, user)
+
+
+async def _handle_make_bet(callback: CallbackQuery, state: FSMContext, match, user):
+    """Основная логика создания ставки"""
+    data = await state.get_data()
+    current_bet_player_id = data.get("current_bet_player_id")  # Уже выбранный игрок
+    
+    storage = get_storage()
     if not match:
         await callback.answer("Матч не найден", show_alert=True)
         return

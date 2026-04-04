@@ -268,14 +268,44 @@ class TestScoreCalculation:
         assert goals == 3
     
     def test_saves_block_goals(self):
-        """Голы съедают отбития (1 гол = 2 отбития)"""
+        """Голы съедают отбития (каждый гол до 2), гол проходит только при 0 отбитий"""
         from src.core.engine.score_calculator import ScoreCalculator
         
         calc = ScoreCalculator()
         
+        # Пример 1 от пользователя: 3 отбития, 2 гола, 0 передач → 0:0
+        # Гол1 съедает 2 отб (остаётся 1), НЕ проходит
+        # Гол2 съедает 1 отб (остаётся 0), НЕ проходит
+        goals = calc._calculate_goals_scored(
+            own_passes=0,
+            own_goals=2,
+            opponent_saves=3
+        )
+        assert goals == 0
+        
+        # Пример 2 от пользователя: 3 отбития, 1 гол + 1 передача → 0:0
+        # Передача съедает 1 отб (остаётся 2)
+        # Гол съедает 2 отб (остаётся 0), НЕ проходит
+        goals = calc._calculate_goals_scored(
+            own_passes=1,
+            own_goals=1,
+            opponent_saves=3
+        )
+        assert goals == 0
+        
+        # Пример: 2 отбития, 3 гола, 0 передач → 2:0
+        # Гол1 съедает 2 отб (остаётся 0), НЕ проходит
+        # Гол2: отб=0, ПРОХОДИТ!
+        # Гол3: отб=0, ПРОХОДИТ!
+        goals = calc._calculate_goals_scored(
+            own_passes=0,
+            own_goals=3,
+            opponent_saves=2
+        )
+        assert goals == 2
+        
         # 0 передач, 4 гола vs 6 отбитий
-        # 0 передач пробивают 0 отбитий → остаётся 6 отбитий
-        # 3 гола съедают 6 отбитий → 1 гол проходит
+        # ceil(6/2) = 3 гола на пробитие → 4-3 = 1 гол проходит
         goals = calc._calculate_goals_scored(
             own_passes=0,
             own_goals=4,
@@ -284,14 +314,14 @@ class TestScoreCalculation:
         assert goals == 1
         
         # 3 передачи, 2 гола vs 4 отбития
-        # 3 передачи пробивают 3 отбития → остаётся 1 отбитие
-        # 1 отбитие // 2 = 0 голов заблокировано → 2 гола проходят
+        # remaining = 4 - 3 = 1 отбитие
+        # ceil(1/2) = 1 гол на пробитие → 2-1 = 1 гол проходит
         goals = calc._calculate_goals_scored(
             own_passes=3,
             own_goals=2,
             opponent_saves=4
         )
-        assert goals == 2
+        assert goals == 1  # НЕ 2!
         
         # 5 передач, 3 гола vs 3 отбития
         # 5 передач пробивают 3 отбития → 0 отбитий осталось

@@ -61,8 +61,8 @@ class MatchRenderer:
         """
         Рассчитать текущий счёт по формуле:
         1. Передачи пробивают отбития соперника (1:1)
-        2. Если передачи >= отбития — все голы засчитываются
-        3. Если отбития > передачи — оставшиеся гасят голы (2:1)
+        2. Каждый гол "съедает" до 2 отбитий, но сам НЕ проходит
+        3. Гол проходит ТОЛЬКО когда отбитий = 0
         
         Возвращает: (голы_команды1, голы_команды2, детали_расчёта)
         """
@@ -82,43 +82,46 @@ class MatchRenderer:
         goals2_raw = match.team2.stats.total_goals
         saves1 = match.team1.stats.total_saves
         
-        # Расчёт голов команды 1
-        remaining_saves2 = max(0, saves2 - passes1)  # Отбития после пробития передачами
-        goals1 = max(0, goals1_raw - (remaining_saves2 // 2))  # 1 гол съедает 2 отбития
+        # Расчёт голов команды 1 (атакует команду 2)
+        remaining_saves2 = max(0, saves2 - passes1)
+        if remaining_saves2 == 0:
+            goals1 = goals1_raw
+        else:
+            goals_to_break = (remaining_saves2 + 1) // 2  # ceil
+            goals1 = max(0, goals1_raw - goals_to_break)
         
-        # Расчёт голов команды 2
+        # Расчёт голов команды 2 (атакует команду 1)
         remaining_saves1 = max(0, saves1 - passes2)
-        goals2 = max(0, goals2_raw - (remaining_saves1 // 2))
+        if remaining_saves1 == 0:
+            goals2 = goals2_raw
+        else:
+            goals_to_break = (remaining_saves1 + 1) // 2  # ceil
+            goals2 = max(0, goals2_raw - goals_to_break)
         
         # Формируем детали
         details_parts = []
         
         # Детали для команды 1
-        if passes1 > 0 or goals1_raw > 0:
+        if passes1 > 0 or goals1_raw > 0 or saves2 > 0:
             d1 = f"Вы: {goals1_raw}⚽"
             if passes1 > 0:
                 d1 += f", {passes1}🎯"
             if saves2 > 0:
-                blocked = min(passes1, saves2)
-                d1 += f" (пробито {blocked} отб)"
-            if remaining_saves2 > 0 and goals1_raw > 0:
-                canceled = remaining_saves2 // 2
-                if canceled > 0:
-                    d1 += f", -{canceled}⚽ (голы съели {canceled*2} отб)"
+                d1 += f" vs {saves2}🛡"
+                if passes1 > 0:
+                    d1 += f" (перед съели {min(passes1, saves2)})"
+                if remaining_saves2 > 0 and goals1_raw > 0:
+                    goals_used = min(goals1_raw, (remaining_saves2 + 1) // 2)
+                    d1 += f", голы съели {goals_used * 2 if goals_used * 2 <= remaining_saves2 else remaining_saves2}"
             details_parts.append(d1)
         
         # Детали для команды 2
-        if passes2 > 0 or goals2_raw > 0:
+        if passes2 > 0 or goals2_raw > 0 or saves1 > 0:
             d2 = f"Соп: {goals2_raw}⚽"
             if passes2 > 0:
                 d2 += f", {passes2}🎯"
             if saves1 > 0:
-                blocked = min(passes2, saves1)
-                d2 += f" (пробито {blocked} отб)"
-            if remaining_saves1 > 0 and goals2_raw > 0:
-                canceled = remaining_saves1 // 2
-                if canceled > 0:
-                    d2 += f", -{canceled}⚽ (голы съели {canceled*2} отб)"
+                d2 += f" vs {saves1}🛡"
             details_parts.append(d2)
         
         details = " | ".join(details_parts) if details_parts else "0:0"
@@ -133,6 +136,11 @@ class MatchRenderer:
         ВАЖНО: В ET учитываются ТОЛЬКО действия игроков, которые играли в ET!
         Статистика Main Time НЕ влияет на победителя ET.
         
+        Формула:
+        1. Передачи съедают отбития 1:1
+        2. Каждый гол съедает до 2 отбитий, но сам НЕ проходит
+        3. Гол проходит ТОЛЬКО когда отбитий = 0
+        
         Возвращает: (голы_команды1, голы_команды2, детали_расчёта)
         """
         if not match.team1 or not match.team2:
@@ -141,7 +149,6 @@ class MatchRenderer:
         from src.core.models.match import MatchPhase
         
         # Собираем статистику ТОЛЬКО игроков ET
-        # Проверяем, в какой фазе играл каждый игрок
         passes1 = 0
         goals1_raw = 0
         saves1 = 0
@@ -152,7 +159,6 @@ class MatchRenderer:
         
         # Команда 1 — ищем игроков ET
         for player in match.team1.players:
-            # Проверяем, использован ли игрок в Extra Time
             player_id_str = str(player.id)
             if player_id_str in match.used_players_extra_m1:
                 passes1 += player.stats.passes
@@ -169,11 +175,19 @@ class MatchRenderer:
         
         # Расчёт голов команды 1 (атакует команду 2)
         remaining_saves2 = max(0, saves2 - passes1)
-        goals1 = max(0, goals1_raw - (remaining_saves2 // 2))
+        if remaining_saves2 == 0:
+            goals1 = goals1_raw
+        else:
+            goals_to_break = (remaining_saves2 + 1) // 2  # ceil
+            goals1 = max(0, goals1_raw - goals_to_break)
         
         # Расчёт голов команды 2 (атакует команду 1)
         remaining_saves1 = max(0, saves1 - passes2)
-        goals2 = max(0, goals2_raw - (remaining_saves1 // 2))
+        if remaining_saves1 == 0:
+            goals2 = goals2_raw
+        else:
+            goals_to_break = (remaining_saves1 + 1) // 2  # ceil
+            goals2 = max(0, goals2_raw - goals_to_break)
         
         # Формируем детали
         details_parts = []

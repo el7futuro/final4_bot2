@@ -692,24 +692,35 @@ async def cb_end_turn(callback: CallbackQuery, state: FSMContext):
 
 def _bot_make_bets(storage, match):
     """Бот делает ставки"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     engine = storage.engine
     
     # Получаем доступных игроков для бота
     available = engine.get_available_players(match, BOT_USER_ID)
+    logger.info(f"[BOT] Available players for bot: {len(available) if available else 0}")
+    
     if not available:
+        logger.warning(f"[BOT] No available players for bot! Match phase: {match.phase}, turn: {match.current_turn}")
         return match
     
     # Выбираем случайного игрока
     player = random.choice(available)
+    logger.info(f"[BOT] Selected player: {player.name} ({player.position})")
     
     # Определяем количество ставок
     turn_num = match.current_turn.turn_number if match.current_turn else 1
     required_bets = 1 if turn_num == 1 else 2
+    logger.info(f"[BOT] Turn {turn_num}, required bets: {required_bets}")
     
     for i in range(required_bets):
         # Получаем доступные типы КАЖДЫЙ раз (они меняются после первой ставки, особенно в ET)
         available_types = engine.get_available_bet_types(match, BOT_USER_ID, player.id)
+        logger.info(f"[BOT] Bet {i+1}: available types = {available_types}")
+        
         if not available_types:
+            logger.warning(f"[BOT] No available bet types for bet {i+1}")
             break
         
         bet_type = random.choice(available_types)
@@ -733,14 +744,16 @@ def _bot_make_bets(storage, match):
         try:
             bet = Bet(**bet_params)
             match, _ = engine.place_bet(match, BOT_USER_ID, player.id, bet)
-        except ValueError:
-            pass
+            logger.info(f"[BOT] Placed bet: {bet_type}")
+        except ValueError as e:
+            logger.error(f"[BOT] Failed to place bet: {e}")
     
     # Подтверждаем ставки бота
     try:
         match = engine.confirm_bets(match, BOT_USER_ID)
-    except ValueError:
-        pass
+        logger.info(f"[BOT] Bets confirmed! Manager2 ready: {match.current_turn.manager2_ready if match.current_turn else 'N/A'}")
+    except ValueError as e:
+        logger.error(f"[BOT] Failed to confirm bets: {e}")
     
     return match
 

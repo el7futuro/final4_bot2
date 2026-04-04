@@ -282,23 +282,28 @@ class BetTracker:
             return available
         
         # ОСНОВНОЕ ВРЕМЯ — стандартные правила
+        # Проверяем, какие типы уже использованы в этом ходу
+        existing_bet_type = self._get_player_bet_type_this_turn(match, manager_id, player.id)
+        
         # Чёт/нечёт — для всех кроме форвардов
         if player.position != Position.FORWARD:
             even_odd_count = self._count_even_odd_bets(match, manager_id)
-            if even_odd_count < 6:
+            if even_odd_count < 6 and existing_bet_type != BetType.EVEN_ODD:
                 available.append(BetType.EVEN_ODD)
         
-        # Больше/меньше — всегда доступно для полевых
-        available.append(BetType.HIGH_LOW)
+        # Больше/меньше — всегда доступно для полевых (если ещё не использовано)
+        if existing_bet_type != BetType.HIGH_LOW:
+            available.append(BetType.HIGH_LOW)
         
-        # Точное число (гол) — с учётом лимитов
-        team = match.get_team(manager_id)
-        if team:
-            try:
-                self._validate_goal_bet(match, manager_id, player, team)
-                available.append(BetType.EXACT_NUMBER)
-            except ValueError:
-                pass
+        # Точное число (гол) — с учётом лимитов (если ещё не использовано)
+        if existing_bet_type != BetType.EXACT_NUMBER:
+            team = match.get_team(manager_id)
+            if team:
+                try:
+                    self._validate_goal_bet(match, manager_id, player, team)
+                    available.append(BetType.EXACT_NUMBER)
+                except ValueError:
+                    pass
         
         return available
     

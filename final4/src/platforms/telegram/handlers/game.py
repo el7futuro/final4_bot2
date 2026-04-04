@@ -459,7 +459,7 @@ async def cb_confirm_bets(callback: CallbackQuery, state: FSMContext):
         await callback.answer("✅ Ставки подтверждены!")
         
         # Для PvP — уведомляем соперника
-        if match.match_type.value == "pvp":
+        if match.match_type.value == "random":
             await _notify_opponent_ready_to_roll(callback.bot, match, user.id)
     else:
         await callback.answer("✅ Ставки подтверждены! Ожидаем соперника...")

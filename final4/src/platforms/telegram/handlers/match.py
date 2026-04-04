@@ -52,7 +52,7 @@ async def _create_waiting_match(callback: CallbackQuery, state: FSMContext, user
     storage = get_storage()
     
     # Создаём матч PvP
-    match = storage.engine.create_match(user.id, MatchType.PVP, platform="telegram")
+    match = storage.engine.create_match(user.id, MatchType.RANDOM, platform="telegram")
     match.status = MatchStatus.WAITING_FOR_OPPONENT
     
     # Команда пользователя

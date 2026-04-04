@@ -105,17 +105,17 @@ class BetTracker:
                     raise ValueError("В дополнительное время только ОДНА ставка на гол, вторая — чёт/нечёт или больше/меньше")
             else:
                 # ОСНОВНОЕ ВРЕМЯ: 
-                # - Форварды и полузащитники МОГУТ делать 2 ставки на гол (если лимит позволяет)
-                # - Защитники — 2 РАЗНЫХ типа (только 1 гол на всех защитников)
+                # - Две ставки на гол разрешены, если квота позволяет (>= 2)
+                # - Остальные типы — РАЗНЫЕ
                 if existing_bet_type and existing_bet_type == bet.bet_type:
-                    # Проверяем исключения для 2 одинаковых ставок на гол
                     if bet.bet_type == BetType.EXACT_NUMBER:
-                        # Форварды и полузащитники могут делать 2 ставки на гол
-                        if player.position in [Position.FORWARD, Position.MIDFIELDER]:
-                            # Проверка лимита уже произошла в _validate_goal_bet
-                            pass  # Разрешаем
-                        else:
-                            raise ValueError(f"Защитники должны делать 2 РАЗНЫХ типа ставок")
+                        # Проверяем, есть ли квота на вторую голевую ставку
+                        # Защитники: 1 квота → не могут 2 ставки на гол
+                        # Полузащитники: 3 квоты → могут, если осталось >= 2
+                        # Форварды: 4 квоты → могут, если осталось >= 2
+                        remaining = self._get_remaining_goal_quota(match, manager_id, player, team)
+                        if remaining < 1:
+                            raise ValueError(f"Недостаточно квоты для второй ставки на гол")
                     else:
                         raise ValueError(f"Две ставки должны быть РАЗНЫХ типов (уже есть {existing_bet_type.value})")
     
@@ -173,7 +173,7 @@ class BetTracker:
         Валидировать ставку на гол.
         
         ОСНОВНОЕ ВРЕМЯ:
-        - DF: максимум 1 ИГРОК с голевой ставкой
+        - DF: максимум 1 СТАВКА на гол на всех защитников
         - MF: максимум 3 СТАВКИ на гол суммарно
         - FW: максимум 4 СТАВКИ на гол суммарно
         
@@ -188,34 +188,51 @@ class BetTracker:
         if match.phase != MatchPhase.MAIN_TIME:
             return  # Без ограничений
         
-        # Подсчёт голевых ставок
-        goal_bet_counts: Dict[Position, int] = defaultdict(int)
-        defenders_with_goal_bets: Set[UUID] = set()
+        remaining = self._get_remaining_goal_quota(match, manager_id, player, team)
+        if remaining <= 0:
+            if player.position == Position.DEFENDER:
+                raise ValueError("Лимит ставок на гол для защитников исчерпан (1)")
+            elif player.position == Position.MIDFIELDER:
+                raise ValueError("Лимит ставок на гол для полузащитников исчерпан (3)")
+            elif player.position == Position.FORWARD:
+                raise ValueError("Лимит ставок на гол для форвардов исчерпан (4)")
+    
+    def _get_remaining_goal_quota(
+        self,
+        match: Match,
+        manager_id: UUID,
+        player: Player,
+        team
+    ) -> int:
+        """
+        Получить оставшуюся квоту на голевые ставки для позиции игрока.
         
+        Квоты:
+        - Защитники: 1 ставка на всех
+        - Полузащитники: 3 ставки на всех
+        - Форварды: 4 ставки на всех
+        """
+        if player.position == Position.GOALKEEPER:
+            return 0
+        
+        # Лимиты по позициям
+        limits = {
+            Position.DEFENDER: 1,
+            Position.MIDFIELDER: 3,
+            Position.FORWARD: 4
+        }
+        
+        limit = limits.get(player.position, 0)
+        
+        # Считаем уже сделанные ставки на гол для этой позиции
+        used = 0
         for bet in match.bets:
             if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
                 bet_player = team.get_player_by_id(bet.player_id)
-                if bet_player:
-                    goal_bet_counts[bet_player.position] += 1
-                    if bet_player.position == Position.DEFENDER:
-                        defenders_with_goal_bets.add(bet.player_id)
+                if bet_player and bet_player.position == player.position:
+                    used += 1
         
-        # Проверяем лимиты
-        if player.position == Position.DEFENDER:
-            # Только 1 защитник может иметь ставку на гол
-            if player.id not in defenders_with_goal_bets:
-                if len(defenders_with_goal_bets) >= 1:
-                    raise ValueError("Только 1 защитник может иметь ставку на гол")
-        
-        elif player.position == Position.MIDFIELDER:
-            # Максимум 3 СТАВКИ на гол от полузащитников суммарно
-            if goal_bet_counts[Position.MIDFIELDER] >= 3:
-                raise ValueError("Максимум 3 ставки на гол от полузащитников")
-        
-        elif player.position == Position.FORWARD:
-            # Максимум 4 СТАВКИ на гол от форвардов суммарно
-            if goal_bet_counts[Position.FORWARD] >= 4:
-                raise ValueError("Максимум 4 ставки на гол от форвардов")
+        return limit - used
     
     def get_available_bet_types(
         self,
@@ -285,25 +302,29 @@ class BetTracker:
         # Проверяем, какие типы уже использованы в этом ходу
         existing_bet_type = self._get_player_bet_type_this_turn(match, manager_id, player.id)
         
-        # Чёт/нечёт — для всех кроме форвардов
+        # Чёт/нечёт — для всех кроме форвардов (нельзя две одинаковые)
         if player.position != Position.FORWARD:
             even_odd_count = self._count_even_odd_bets(match, manager_id)
             if even_odd_count < 6 and existing_bet_type != BetType.EVEN_ODD:
                 available.append(BetType.EVEN_ODD)
         
-        # Больше/меньше — всегда доступно для полевых (если ещё не использовано)
+        # Больше/меньше — всегда доступно для полевых (нельзя две одинаковые)
         if existing_bet_type != BetType.HIGH_LOW:
             available.append(BetType.HIGH_LOW)
         
-        # Точное число (гол) — с учётом лимитов (если ещё не использовано)
-        if existing_bet_type != BetType.EXACT_NUMBER:
-            team = match.get_team(manager_id)
-            if team:
-                try:
-                    self._validate_goal_bet(match, manager_id, player, team)
+        # Точное число (гол) — проверяем квоту
+        team = match.get_team(manager_id)
+        if team:
+            remaining_quota = self._get_remaining_goal_quota(match, manager_id, player, team)
+            
+            if existing_bet_type == BetType.EXACT_NUMBER:
+                # Первая ставка уже на гол — для второй нужна ещё 1 квота
+                if remaining_quota >= 1:
                     available.append(BetType.EXACT_NUMBER)
-                except ValueError:
-                    pass
+            else:
+                # Первая ставка не на гол — проверяем есть ли хоть 1 квота
+                if remaining_quota >= 1:
+                    available.append(BetType.EXACT_NUMBER)
         
         return available
     

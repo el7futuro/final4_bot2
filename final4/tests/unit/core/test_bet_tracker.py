@@ -276,7 +276,7 @@ class TestGoalBetLimits:
             exact_number=5
         )
         
-        with pytest.raises(ValueError, match="1 защитник"):
+        with pytest.raises(ValueError, match="Лимит.*защитников"):
             tracker.validate_bet(match, manager_id, def2, bet2)
     
     def test_max_3_goal_bets_from_midfielders(self, tracker, match_with_team, manager_id):
@@ -310,7 +310,7 @@ class TestGoalBetLimits:
             exact_number=4
         )
         
-        with pytest.raises(ValueError, match="3 ставки.*полузащитников"):
+        with pytest.raises(ValueError, match="Лимит.*полузащитников"):
             tracker.validate_bet(match, manager_id, mf2, bet4)
 
 

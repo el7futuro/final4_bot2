@@ -101,7 +101,7 @@ async def _render_game_screen(callback: CallbackQuery, state: FSMContext, show_s
             user_bets = len(turn.manager2_bets)
             is_confirmed = turn.manager2_ready
         
-        required_bets = turn.get_required_bets_count()
+        required_bets = turn.get_required_bets_count(match.phase)
         both_ready = turn.both_ready()
     else:
         user_bets = 0
@@ -647,6 +647,33 @@ async def _notify_opponent_turn_result(bot, match, roller_user_id: UUID, dice_va
         logger.error(f"[PVP] Failed to notify opponent turn result: {e}")
 
 
+async def _notify_penalty_owner(bot, match, penalty_owner_id: UUID, context_text: str):
+    """Уведомить владельца пенальти, что ему нужно бросить (PvP)"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    storage = get_storage()
+    owner = storage.get_user_by_id(penalty_owner_id)
+    
+    if not owner:
+        logger.warning(f"[PVP] Penalty owner not found: {penalty_owner_id}")
+        return
+    
+    renderer = MatchRenderer()
+    text = renderer.render_match_status(match, penalty_owner_id)
+    text += "\n\n⚽ <b>У ВАС ПЕНАЛЬТИ!</b>\nВыберите, куда бьёте:"
+    
+    try:
+        await bot.send_message(
+            chat_id=owner.telegram_id,
+            text=text,
+            reply_markup=Keyboards.penalty_choice()
+        )
+        logger.info(f"[PVP] Penalty notification sent to {owner.telegram_id}")
+    except Exception as e:
+        logger.error(f"[PVP] Failed to notify penalty owner: {e}")
+
+
 @router.callback_query(F.data == "roll_dice")
 async def cb_roll_dice_restore(callback: CallbackQuery, state: FSMContext):
     """Бросить кубик (с восстановлением состояния)"""
@@ -754,8 +781,8 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
                 text += f"\n\n⚽ <b>ПЕНАЛЬТИ БОТА!</b>\nБот выбрал: {choice_text}\n🎲 Выпало: {pen_dice}\n❌ Бот забил гол!"
             else:
                 text += f"\n\n⚽ <b>ПЕНАЛЬТИ БОТА!</b>\nБот выбрал: {choice_text}\n🎲 Выпало: {pen_dice}\n✅ Вы отбили!"
-        else:
-            # Пенальти пользователя — показываем выбор High/Low
+        elif penalty_owner == user.id:
+            # Пенальти ТЕКУЩЕГО пользователя — показываем выбор High/Low
             text += "\n\n⚽ <b>ПЕНАЛЬТИ!</b>\nВыберите, куда бьёте:"
             
             await state.set_state(MatchStates.penalty_kick)
@@ -765,6 +792,13 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
             )
             await callback.answer("⚽ У вас пенальти!")
             return
+        else:
+            # Пенальти СОПЕРНИКА в PvP — текущий пользователь ждёт
+            text += "\n\n⚽ <b>ПЕНАЛЬТИ СОПЕРНИКА!</b>\n⏳ Ожидаем решение соперника..."
+            
+            # Уведомляем владельца пенальти
+            if match.match_type.value == "random":
+                await _notify_penalty_owner(callback.bot, match, penalty_owner, text)
     
     await state.set_state(MatchStates.in_game)
     await callback.message.edit_text(
@@ -984,7 +1018,9 @@ async def _notify_opponent_new_turn(bot, match, user_id: UUID):
     turn_num = match.current_turn.turn_number if match.current_turn else 1
     bets_count = len([b for b in match.bets 
                       if b.manager_id == opponent_id and b.turn_number == turn_num])
-    required_bets = 1 if turn_num == 1 else 2
+    # В Extra Time всегда 2 ставки
+    from src.core.models.match import MatchPhase
+    required_bets = 2 if match.phase == MatchPhase.EXTRA_TIME else (1 if turn_num == 1 else 2)
     
     try:
         await bot.send_message(
@@ -1023,8 +1059,10 @@ def _bot_make_bets(storage, match):
     
     # Определяем количество ставок
     turn_num = match.current_turn.turn_number if match.current_turn else 1
-    required_bets = 1 if turn_num == 1 else 2
-    logger.info(f"[BOT] Turn {turn_num}, required bets: {required_bets}")
+    # В Extra Time всегда 2 ставки
+    from src.core.models.match import MatchPhase
+    required_bets = 2 if match.phase == MatchPhase.EXTRA_TIME else (1 if turn_num == 1 else 2)
+    logger.info(f"[BOT] Turn {turn_num}, required bets: {required_bets}, phase: {match.phase}")
     
     for i in range(required_bets):
         # Получаем доступные типы КАЖДЫЙ раз (они меняются после первой ставки, особенно в ET)

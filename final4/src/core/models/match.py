@@ -75,8 +75,23 @@ class TurnState(BaseModel):
         """Оба игрока сделали ставки"""
         return self.manager1_ready and self.manager2_ready
     
-    def get_required_bets_count(self) -> int:
-        """Сколько ставок требуется (1 для вратаря, 2 для полевых)"""
+    def get_required_bets_count(self, phase: Optional['MatchPhase'] = None) -> int:
+        """
+        Сколько ставок требуется.
+        
+        ОСНОВНОЕ ВРЕМЯ:
+        - Ход 1 (вратарь): 1 ставка
+        - Ходы 2-11: 2 ставки
+        
+        ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ:
+        - ВСЕ ходы: 2 ставки (вратарь не играет в ET)
+        """
+        # В Extra Time всегда 2 ставки
+        if phase is not None:
+            from src.core.models.match import MatchPhase
+            if phase == MatchPhase.EXTRA_TIME:
+                return 2
+        
         return 1 if self.turn_number == 1 else 2
 
 

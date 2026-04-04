@@ -259,7 +259,24 @@ async def _handle_make_bet(callback: CallbackQuery, state: FSMContext, match, us
     # Иначе — выбор игрока
     available_players = storage.engine.get_available_players(match, user.id)
     
+    # Логирование для отладки PvP
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[DEBUG] User {user.id} (is_m1={is_user_m1}), turn={turn.turn_number if turn else 'N/A'}")
+    logger.info(f"[DEBUG] Available players: {len(available_players)}")
+    
     if not available_players:
+        # Дополнительная отладка
+        team = match.get_team(user.id)
+        if team:
+            used = match.get_used_players(user.id)
+            logger.warning(f"[DEBUG] Team has {len(team.players)} players, used: {len(used)}")
+            logger.warning(f"[DEBUG] Used player IDs: {used}")
+            logger.warning(f"[DEBUG] Phase: {match.phase}")
+        else:
+            logger.warning(f"[DEBUG] No team for user {user.id}!")
+            logger.warning(f"[DEBUG] match.team1 manager: {match.manager1_id}, match.team2 manager: {match.manager2_id}")
+        
         await callback.answer("Нет доступных игроков!", show_alert=True)
         return
     

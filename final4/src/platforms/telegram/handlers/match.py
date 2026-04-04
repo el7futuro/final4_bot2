@@ -112,8 +112,7 @@ async def _join_existing_match(callback: CallbackQuery, state: FSMContext, user,
     
     match = storage.engine.set_team_without_formation(match, user.id, user_team)
     
-    # Начинаем матч
-    match = storage.engine.start_match(match)
+    # start_match уже вызывается внутри set_team_without_formation когда обе команды готовы
     storage.save_match(match)
     
     # Сохраняем состояние для второго игрока

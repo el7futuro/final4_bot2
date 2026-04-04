@@ -136,6 +136,22 @@ async def cb_back_to_game(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "match_stats")
 async def cb_match_stats(callback: CallbackQuery, state: FSMContext):
     """Показать статистику матча"""
+    # Проверяем, есть ли match_id в состоянии
+    data = await state.get_data()
+    match_id = data.get("match_id")
+    
+    if not match_id:
+        # Пытаемся восстановить из активного матча
+        storage = get_storage()
+        user = storage.get_or_create_user(
+            telegram_id=callback.from_user.id,
+            username=callback.from_user.full_name or "Игрок"
+        )
+        match = storage.get_user_active_match(user.id)
+        if match:
+            await state.update_data(match_id=str(match.id))
+            await state.set_state(MatchStates.in_game)
+    
     await _render_game_screen(callback, state, show_stats=True)
     await callback.answer()
 
@@ -572,14 +588,22 @@ async def _notify_manager1_can_roll(bot, match):
 
 async def _notify_opponent_turn_result(bot, match, roller_user_id: UUID, dice_value: int, won_bets):
     """Уведомить соперника о результатах хода (PvP)"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     storage = get_storage()
     
     # Определяем соперника
     opponent_id = match.manager2_id if roller_user_id == match.manager1_id else match.manager1_id
     opponent = storage.get_user_by_id(opponent_id)
     
+    logger.info(f"[PVP] Notifying opponent: roller={roller_user_id}, opponent_id={opponent_id}, opponent={opponent}")
+    
     if not opponent:
+        logger.warning(f"[PVP] Opponent not found! opponent_id={opponent_id}")
         return
+    
+    logger.info(f"[PVP] Opponent telegram_id={opponent.telegram_id}")
     
     renderer = MatchRenderer()
     text = renderer.render_dice_result_simultaneous(dice_value, won_bets, match, opponent_id)
@@ -595,9 +619,9 @@ async def _notify_opponent_turn_result(bot, match, roller_user_id: UUID, dice_va
             text=text,
             reply_markup=Keyboards.game_actions_after_roll()
         )
+        logger.info(f"[PVP] Notification sent successfully to {opponent.telegram_id}")
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Failed to notify opponent turn result: {e}")
+        logger.error(f"[PVP] Failed to notify opponent turn result: {e}")
 
 
 @router.callback_query(F.data == "roll_dice")
@@ -809,6 +833,28 @@ async def cb_penalty_roll(callback: CallbackQuery, state: FSMContext):
     await callback.answer("⚽ ГОЛ!" if success else "❌ Промах!")
 
 
+@router.callback_query(F.data == "end_turn")
+async def cb_end_turn_restore(callback: CallbackQuery, state: FSMContext):
+    """Завершить ход (с восстановлением состояния)"""
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    # Ищем активный матч
+    match = storage.get_user_active_match(user.id)
+    if not match:
+        await callback.answer("У вас нет активного матча", show_alert=True)
+        return
+    
+    # Восстанавливаем состояние
+    await state.update_data(match_id=str(match.id))
+    await state.set_state(MatchStates.in_game)
+    
+    await _handle_end_turn(callback, state, match, user)
+
+
 @router.callback_query(F.data == "end_turn", MatchStates.in_game)
 async def cb_end_turn(callback: CallbackQuery, state: FSMContext):
     """Завершить ход"""
@@ -825,6 +871,13 @@ async def cb_end_turn(callback: CallbackQuery, state: FSMContext):
     if not match:
         await callback.answer("Матч не найден", show_alert=True)
         return
+    
+    await _handle_end_turn(callback, state, match, user)
+
+
+async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, user):
+    """Основная логика завершения хода"""
+    storage = get_storage()
     
     try:
         match = storage.engine.end_turn(match)
@@ -878,8 +931,52 @@ async def cb_end_turn(callback: CallbackQuery, state: FSMContext):
     else:
         # Следующий ход
         await _render_game_screen(callback, state)
+        
+        # В PvP — уведомляем соперника о новом ходе
+        if match.match_type.value == "random":
+            await _notify_opponent_new_turn(callback.bot, match, user.id)
     
     await callback.answer()
+
+
+async def _notify_opponent_new_turn(bot, match, user_id: UUID):
+    """Уведомить соперника о новом ходе (PvP)"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    storage = get_storage()
+    
+    opponent_id = match.manager2_id if user_id == match.manager1_id else match.manager1_id
+    opponent = storage.get_user_by_id(opponent_id)
+    
+    if not opponent:
+        logger.warning(f"[PVP] Opponent not found for new turn notification")
+        return
+    
+    renderer = MatchRenderer()
+    text = renderer.render_match_status(match, opponent_id)
+    text += "\n\n" + renderer.render_turn_info_simultaneous(match, opponent_id)
+    
+    # Считаем ставки этого хода
+    turn_num = match.current_turn.turn_number if match.current_turn else 1
+    bets_count = len([b for b in match.bets 
+                      if b.manager_id == opponent_id and b.turn_number == turn_num])
+    required_bets = 1 if turn_num == 1 else 2
+    
+    try:
+        await bot.send_message(
+            chat_id=opponent.telegram_id,
+            text=f"➡️ <b>Ход {turn_num}</b>\n\n" + text,
+            reply_markup=Keyboards.game_actions_simultaneous(
+                bets_count=bets_count,
+                required_bets=required_bets,
+                is_confirmed=False,
+                both_ready=False
+            )
+        )
+        logger.info(f"[PVP] New turn notification sent to {opponent.telegram_id}")
+    except Exception as e:
+        logger.error(f"[PVP] Failed to notify opponent new turn: {e}")
 
 
 def _bot_make_bets(storage, match):

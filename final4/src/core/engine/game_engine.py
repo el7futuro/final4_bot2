@@ -509,29 +509,9 @@ class GameEngine:
         card.is_used = True
         card.applied_to_player_id = target_player_id
         
-        # Обработка пенальти — автоматический розыгрыш (50/50)
-        if match.current_turn and match.current_turn.waiting_for_penalty_roll:
-            import random
-            penalty_success = random.choice([True, False])
-            match.current_turn.waiting_for_penalty_roll = False
-            
-            # Цель пенальти — свой игрок
-            penalty_target = match.current_turn.manager1_player_id if manager_id == match.manager1_id else match.current_turn.manager2_player_id
-            
-            if penalty_success and penalty_target:
-                # Гол от пенальти
-                team = match.get_team(manager_id)
-                if team:
-                    player = team.get_player_by_id(penalty_target)
-                    if player:
-                        player.add_goals(1)
-                        if history:
-                            stats = history.get_player_stats(manager_id, penalty_target, match.manager1_id)
-                            if stats:
-                                stats.add_goals(1, "пенальти")
-                        card.penalty_scored = True
-            else:
-                card.penalty_scored = False
+        # Пенальти — НЕ применяем автоматически, оставляем для интерактивного выбора
+        # Флаг waiting_for_penalty_roll = True уже установлен в apply_effect
+        # Бот должен показать выбор Больше/Меньше
         
         return match, card
     
@@ -592,6 +572,98 @@ class GameEngine:
                 match.current_turn.manager2_card_id = card.id
         
         return match, card
+    
+    def resolve_penalty(
+        self,
+        match: Match,
+        manager_id: UUID,
+        choice: str  # "high" или "low"
+    ) -> Tuple[Match, bool, int]:
+        """
+        Разыграть пенальти.
+        
+        Args:
+            match: Матч
+            manager_id: ID менеджера, который бьёт пенальти
+            choice: "high" (4,5,6) или "low" (1,2,3)
+        
+        Returns:
+            (match, success, dice_value)
+            - success: True если гол забит, False если вратарь отбил
+        """
+        if not match.current_turn:
+            raise ValueError("Ход не начат")
+        
+        if not match.current_turn.waiting_for_penalty_roll:
+            raise ValueError("Нет пенальти для розыгрыша")
+        
+        import random
+        dice_value = random.randint(1, 6)
+        
+        # Проверяем угадал ли
+        if choice == "high":
+            success = dice_value >= 4
+        else:  # low
+            success = dice_value <= 3
+        
+        match.current_turn.waiting_for_penalty_roll = False
+        
+        # Находим карточку пенальти
+        penalty_card = None
+        for card in match.whistle_cards_drawn:
+            from ..models.whistle_card import CardType
+            if (card.card_type == CardType.PENALTY and 
+                card.applied_by_manager_id == manager_id and
+                card.penalty_scored is None):
+                penalty_card = card
+                break
+        
+        history = self.get_match_history(match)
+        
+        if success:
+            # Гол — своему игроку
+            if manager_id == match.manager1_id:
+                player_id = match.current_turn.manager1_player_id
+                team = match.team1
+            else:
+                player_id = match.current_turn.manager2_player_id
+                team = match.team2
+            
+            if team and player_id:
+                player = team.get_player_by_id(player_id)
+                if player:
+                    player.add_goals(1)
+                    if history:
+                        stats = history.get_player_stats(manager_id, player_id, match.manager1_id)
+                        if stats:
+                            stats.add_goals(1, "пенальти")
+            
+            if penalty_card:
+                penalty_card.penalty_scored = True
+        else:
+            # Промах — сопернику отбитие
+            if manager_id == match.manager1_id:
+                opp_player_id = match.current_turn.manager2_player_id
+                opp_team = match.team2
+                opp_manager_id = match.manager2_id
+            else:
+                opp_player_id = match.current_turn.manager1_player_id
+                opp_team = match.team1
+                opp_manager_id = match.manager1_id
+            
+            if opp_team and opp_player_id:
+                opp_player = opp_team.get_player_by_id(opp_player_id)
+                if opp_player:
+                    opp_player.add_saves(1)
+                    if history:
+                        stats = history.get_player_stats(opp_manager_id, opp_player_id, match.manager1_id)
+                        if stats:
+                            stats.add_saves(1, "отбил пенальти")
+            
+            if penalty_card:
+                penalty_card.penalty_scored = False
+        
+        return match, success, dice_value
     
     def apply_whistle_card(
         self,

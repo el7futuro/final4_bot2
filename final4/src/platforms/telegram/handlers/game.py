@@ -493,12 +493,101 @@ async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
     if cards_text:
         text += "\n\n" + cards_text
     
+    # Проверяем, нужен ли розыгрыш пенальти
+    if match.current_turn and match.current_turn.waiting_for_penalty_roll:
+        # Определяем, чей пенальти
+        from src.core.models.whistle_card import CardType
+        from src.core.engine.game_engine import BOT_USER_ID
+        
+        penalty_owner = None
+        for card in match.whistle_cards_drawn:
+            if (card.card_type == CardType.PENALTY and 
+                card.turn_applied == match.current_turn.turn_number and
+                card.penalty_scored is None):
+                penalty_owner = card.applied_by_manager_id
+                break
+        
+        if penalty_owner == BOT_USER_ID:
+            # Пенальти бота — автоматический выбор
+            import random
+            bot_choice = random.choice(["high", "low"])
+            match, success, pen_dice = storage.engine.resolve_penalty(match, BOT_USER_ID, bot_choice)
+            storage.save_match(match)
+            
+            choice_text = "Больше" if bot_choice == "high" else "Меньше"
+            if success:
+                text += f"\n\n⚽ <b>ПЕНАЛЬТИ БОТА!</b>\nБот выбрал: {choice_text}\n🎲 Выпало: {pen_dice}\n❌ Бот забил!"
+            else:
+                text += f"\n\n⚽ <b>ПЕНАЛЬТИ БОТА!</b>\nБот выбрал: {choice_text}\n🎲 Выпало: {pen_dice}\n✅ Вы отбили!"
+        else:
+            # Пенальти пользователя — показываем выбор
+            text += "\n\n⚽ <b>ПЕНАЛЬТИ!</b>\nВыберите: Больше (4-6) или Меньше (1-3)?"
+            
+            await state.set_state(MatchStates.penalty_kick)
+            await callback.message.edit_text(
+                text,
+                reply_markup=Keyboards.penalty_choice()
+            )
+            await callback.answer("⚽ Пенальти!")
+            return
+    
     await state.set_state(MatchStates.in_game)
     await callback.message.edit_text(
         text,
         reply_markup=Keyboards.game_actions_after_roll()
     )
     await callback.answer(f"🎲 Выпало: {dice_value}!")
+
+
+@router.callback_query(F.data.startswith("penalty:"), MatchStates.penalty_kick)
+async def cb_penalty_choice(callback: CallbackQuery, state: FSMContext):
+    """Выбор для пенальти"""
+    choice = callback.data.split(":")[1]  # "high" или "low"
+    
+    data = await state.get_data()
+    match_id = data.get("match_id")
+    
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    match = storage.get_match(UUID(match_id))
+    if not match:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    try:
+        match, success, dice_value = storage.engine.resolve_penalty(match, user.id, choice)
+        storage.save_match(match)
+    except ValueError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    
+    # Формируем результат
+    choice_text = "Больше (4-6)" if choice == "high" else "Меньше (1-3)"
+    
+    if success:
+        result_text = f"🎲 Выпало: {dice_value}\n✅ <b>ГОЛ!</b> Вы угадали ({choice_text})!"
+    else:
+        result_text = f"🎲 Выпало: {dice_value}\n❌ <b>Промах!</b> Вратарь отбил ({choice_text})"
+    
+    renderer = MatchRenderer()
+    text = renderer.render_match_status(match, user.id)
+    text += "\n\n" + result_text
+    
+    # Карточки
+    cards_text = renderer.render_cards_drawn(match, user.id)
+    if cards_text:
+        text += "\n\n" + cards_text
+    
+    await state.set_state(MatchStates.in_game)
+    await callback.message.edit_text(
+        text,
+        reply_markup=Keyboards.game_actions_after_roll()
+    )
+    await callback.answer("⚽ ГОЛ!" if success else "❌ Промах!")
 
 
 @router.callback_query(F.data == "end_turn", MatchStates.in_game)

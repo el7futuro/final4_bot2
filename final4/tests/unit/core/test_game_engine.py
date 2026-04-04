@@ -267,18 +267,38 @@ class TestScoreCalculation:
         )
         assert goals == 3
     
-    def test_goals_destroy_saves(self):
-        """Голы уничтожают отбития (1 гол = 2 отбития)"""
+    def test_saves_block_goals(self):
+        """Отбития блокируют голы (1 отбитие = 1 гол)"""
         from src.core.engine.score_calculator import ScoreCalculator
         
         calc = ScoreCalculator()
         
         # 0 передач, 4 гола vs 6 отбитий
-        # 4 гола нужно потратить на 6 отбитий: 3 гола = 6 отбитий
-        # Остаётся 1 гол
+        # 0 передач пробивают 0 отбитий → остаётся 6 отбитий
+        # 6 отбитий блокируют 4 гола → 0 голов
         goals = calc._calculate_goals_scored(
             own_passes=0,
             own_goals=4,
             opponent_saves=6
         )
+        assert goals == 0
+        
+        # 3 передачи, 2 гола vs 4 отбития
+        # 3 передачи пробивают 3 отбития → остаётся 1 отбитие
+        # 1 отбитие блокирует 1 гол → 1 гол
+        goals = calc._calculate_goals_scored(
+            own_passes=3,
+            own_goals=2,
+            opponent_saves=4
+        )
         assert goals == 1
+        
+        # 5 передач, 3 гола vs 3 отбития
+        # 5 передач пробивают 3 отбития → 0 отбитий осталось
+        # Все 3 гола засчитываются
+        goals = calc._calculate_goals_scored(
+            own_passes=5,
+            own_goals=3,
+            opponent_saves=3
+        )
+        assert goals == 3

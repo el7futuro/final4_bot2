@@ -238,6 +238,16 @@ class Keyboards:
         return builder.as_markup()
     
     @staticmethod
+    def penalty_choice() -> InlineKeyboardMarkup:
+        """Выбор для пенальти: Больше или Меньше"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="⬇️ Меньше (1-3)", callback_data="penalty:low"),
+            InlineKeyboardButton(text="⬆️ Больше (4-6)", callback_data="penalty:high")
+        )
+        return builder.as_markup()
+    
+    @staticmethod
     def bet_player_select(players: List[Player]) -> InlineKeyboardMarkup:
         """Выбор игрока для ставки"""
         builder = InlineKeyboardBuilder()

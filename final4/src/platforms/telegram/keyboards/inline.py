@@ -49,6 +49,15 @@ class Keyboards:
         )
         return builder.as_markup()
     
+    @staticmethod
+    def cancel_search() -> InlineKeyboardMarkup:
+        """Клавиатура отмены поиска соперника"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="❌ Отменить поиск", callback_data="cancel_search")
+        )
+        return builder.as_markup()
+    
     # ====== ФОРМАЦИИ ======
     
     @staticmethod

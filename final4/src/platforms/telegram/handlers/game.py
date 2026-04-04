@@ -457,9 +457,68 @@ async def cb_confirm_bets(callback: CallbackQuery, state: FSMContext):
         )
         await state.set_state(MatchStates.waiting_roll)
         await callback.answer("✅ Ставки подтверждены!")
+        
+        # Для PvP — уведомляем соперника
+        if match.match_type.value == "pvp":
+            await _notify_opponent_ready_to_roll(callback.bot, match, user.id)
     else:
         await callback.answer("✅ Ставки подтверждены! Ожидаем соперника...")
         await _render_game_screen(callback, state)
+
+
+async def _notify_opponent_ready_to_roll(bot, match, confirming_user_id: UUID):
+    """Уведомить соперника что можно бросать кубик (PvP)"""
+    storage = get_storage()
+    
+    # Определяем соперника
+    opponent_id = match.manager2_id if confirming_user_id == match.manager1_id else match.manager1_id
+    opponent = storage.get_user_by_id(opponent_id)
+    
+    if not opponent:
+        return
+    
+    renderer = MatchRenderer()
+    bets_text = renderer.render_both_bets_before_roll(match, opponent_id)
+    
+    try:
+        await bot.send_message(
+            chat_id=opponent.telegram_id,
+            text="✅ <b>Соперник подтвердил ставки!</b>\n\n" + bets_text,
+            reply_markup=Keyboards.roll_dice_button()
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to notify opponent: {e}")
+
+
+async def _notify_opponent_turn_result(bot, match, roller_user_id: UUID, dice_value: int, won_bets):
+    """Уведомить соперника о результатах хода (PvP)"""
+    storage = get_storage()
+    
+    # Определяем соперника
+    opponent_id = match.manager2_id if roller_user_id == match.manager1_id else match.manager1_id
+    opponent = storage.get_user_by_id(opponent_id)
+    
+    if not opponent:
+        return
+    
+    renderer = MatchRenderer()
+    text = renderer.render_dice_result_simultaneous(dice_value, won_bets, match, opponent_id)
+    
+    # Карточки
+    cards_text = renderer.render_cards_drawn(match, opponent_id)
+    if cards_text:
+        text += "\n\n" + cards_text
+    
+    try:
+        await bot.send_message(
+            chat_id=opponent.telegram_id,
+            text=text,
+            reply_markup=Keyboards.game_actions_after_roll()
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to notify opponent turn result: {e}")
 
 
 @router.callback_query(F.data == "roll_dice", MatchStates.waiting_roll)
@@ -537,6 +596,10 @@ async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
         reply_markup=Keyboards.game_actions_after_roll()
     )
     await callback.answer(f"🎲 Выпало: {dice_value}!")
+    
+    # Для PvP — уведомляем соперника о результатах хода
+    if match.match_type.value == "pvp":
+        await _notify_opponent_turn_result(callback.bot, match, user.id, dice_value, won_bets)
 
 
 @router.callback_query(F.data.startswith("penalty_choice:"), MatchStates.penalty_kick)

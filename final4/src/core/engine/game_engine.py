@@ -137,6 +137,10 @@ class GameEngine:
         
         return match
     
+    def start_match(self, match: Match) -> Match:
+        """Публичный метод начала матча (для PvP)"""
+        return self._start_match(match)
+    
     def _start_match(self, match: Match) -> Match:
         """Начать матч"""
         match.status = MatchStatus.IN_PROGRESS

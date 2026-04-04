@@ -280,6 +280,12 @@ async def _handle_make_bet(callback: CallbackQuery, state: FSMContext, match, us
         await callback.answer("Нет доступных игроков!", show_alert=True)
         return
     
+    # Отладка: показать сколько игроков использовано
+    team = match.get_team(user.id)
+    if team:
+        used = match.get_used_players(user.id)
+        logger.info(f"[DEBUG] Team {len(team.players)} players, used={len(used)}, available={len(available_players)}")
+    
     await state.set_state(MatchStates.selecting_bet_player)
     await callback.message.edit_text(
         "🎯 <b>Выберите игрока для ставки:</b>",

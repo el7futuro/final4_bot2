@@ -206,54 +206,74 @@ class MatchRenderer:
     
     @staticmethod
     def render_team_stats(team: Team, match: Match = None, is_opponent: bool = False) -> str:
-        """Отрендерить статистику команды с эффектами карточек"""
+        """Отрендерить статистику команды с разделением на Main Time и Extra Time"""
         team.calculate_stats()
         
         prefix = "🔴 Соперник" if is_opponent else "🔵 Ваша команда"
         
-        lines = [
-            f"<b>{prefix}: {team.name}</b>",
-            f"🛡 Отбития: {team.stats.total_saves}",
-            f"🎯 Передачи: {team.stats.total_passes}",
-            f"⚽ Голы: {team.stats.total_goals}",
-        ]
+        lines = [f"<b>{prefix}: {team.name}</b>"]
         
-        # Показываем статистику каждого игравшего игрока
-        played_players = [p for p in team.players if p.stats.saves > 0 or p.stats.passes > 0 or p.stats.goals > 0]
-        
-        # Сортируем по порядку ходов (используем историю матча)
-        if match and played_players:
-            # Получаем порядок из использованных игроков
-            used_order = match.get_used_players(team.manager_id)
+        # Получаем использованных игроков по фазам
+        if match:
+            mt_players = []
+            et_players = []
             
-            def get_turn_order(player):
-                try:
-                    return used_order.index(player.id)
-                except (ValueError, AttributeError):
-                    return 999
+            # Main Time игроки
+            used_mt = match.used_players_main_m1 if team.manager_id == match.manager1_id else match.used_players_main_m2
+            for player in team.players:
+                if str(player.id) in used_mt:
+                    mt_players.append(player)
             
-            played_players = sorted(played_players, key=get_turn_order)
-        
-        if played_players:
-            lines.append("\n<b>Игроки (по ходам):</b>")
-            for i, p in enumerate(played_players, 1):
-                stats_str = []
-                if p.stats.saves > 0:
-                    stats_str.append(f"{p.stats.saves} отб")
-                if p.stats.passes > 0:
-                    stats_str.append(f"{p.stats.passes} пер")
-                if p.stats.goals > 0:
-                    stats_str.append(f"{p.stats.goals} гол")
+            # Extra Time игроки
+            used_et = match.used_players_extra_m1 if team.manager_id == match.manager1_id else match.used_players_extra_m2
+            for player in team.players:
+                if str(player.id) in used_et:
+                    et_players.append(player)
+            
+            # Статистика Main Time
+            mt_saves = sum(p.stats.saves for p in mt_players)
+            mt_passes = sum(p.stats.passes for p in mt_players)
+            mt_goals = sum(p.stats.goals for p in mt_players)
+            
+            lines.append(f"\n<b>⏱ Основное время:</b>")
+            lines.append(f"  🛡 {mt_saves} | 🎯 {mt_passes} | ⚽ {mt_goals}")
+            
+            if mt_players:
+                for i, p in enumerate(mt_players, 1):
+                    stats_parts = []
+                    if p.stats.saves > 0:
+                        stats_parts.append(f"{p.stats.saves}🛡")
+                    if p.stats.passes > 0:
+                        stats_parts.append(f"{p.stats.passes}🎯")
+                    if p.stats.goals > 0:
+                        stats_parts.append(f"{p.stats.goals}⚽")
+                    if stats_parts:
+                        lines.append(f"    {i}. {p.name}: {' '.join(stats_parts)}")
+            
+            # Статистика Extra Time (если есть)
+            if et_players:
+                et_saves = sum(p.stats.saves for p in et_players)
+                et_passes = sum(p.stats.passes for p in et_players)
+                et_goals = sum(p.stats.goals for p in et_players)
                 
-                player_line = f"  {i}. {p.name}: {', '.join(stats_str)}"
+                lines.append(f"\n<b>⏱ Дополнительное время:</b>")
+                lines.append(f"  🛡 {et_saves} | 🎯 {et_passes} | ⚽ {et_goals}")
                 
-                # Добавляем эффекты карточек
-                if match:
-                    card_effects = MatchRenderer._get_player_card_effects(match, team.manager_id, p.id)
-                    if card_effects:
-                        player_line += f" [{card_effects}]"
-                
-                lines.append(player_line)
+                for i, p in enumerate(et_players, 1):
+                    stats_parts = []
+                    if p.stats.saves > 0:
+                        stats_parts.append(f"{p.stats.saves}🛡")
+                    if p.stats.passes > 0:
+                        stats_parts.append(f"{p.stats.passes}🎯")
+                    if p.stats.goals > 0:
+                        stats_parts.append(f"{p.stats.goals}⚽")
+                    if stats_parts:
+                        lines.append(f"    {i}. {p.name}: {' '.join(stats_parts)}")
+        else:
+            # Без матча — общая статистика
+            lines.append(f"🛡 Отбития: {team.stats.total_saves}")
+            lines.append(f"🎯 Передачи: {team.stats.total_passes}")
+            lines.append(f"⚽ Голы: {team.stats.total_goals}")
         
         return "\n".join(lines)
     

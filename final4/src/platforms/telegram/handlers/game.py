@@ -936,6 +936,11 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
     """Основная логика завершения хода"""
     storage = get_storage()
     
+    # В PvP только manager1 завершает ход
+    if match.match_type.value == "random" and user.id != match.manager1_id:
+        await callback.answer("Ожидайте, пока соперник завершит ход", show_alert=True)
+        return
+    
     try:
         match = storage.engine.end_turn(match)
         storage.save_match(match)

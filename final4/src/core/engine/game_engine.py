@@ -461,12 +461,30 @@ class GameEngine:
         """
         Автоматически вытянуть и применить карточку Свисток при выигрыше ставки.
         
+        ВАЖНО: Вратари НЕ получают карточки свисток!
+        
         Карточки применяются автоматически:
         - SELF_PLAYER (гол, дубль, хет-трик, перехват, отбор, фол, потеря) -> свой игрок
         - OPPONENT_PLAYER (удаление, предупреждение, офсайд) -> игрок соперника
         - OPPONENT_TEAM (автогол) -> команда соперника
         - SPECIAL (пенальти, ВАР) -> особая логика
         """
+        # Проверяем, не вратарь ли делал ставку
+        if match.current_turn:
+            player_id = None
+            if manager_id == match.manager1_id:
+                player_id = match.current_turn.manager1_player_id
+            else:
+                player_id = match.current_turn.manager2_player_id
+            
+            if player_id:
+                team = match.get_team(manager_id)
+                if team:
+                    player = team.get_player_by_id(player_id)
+                    if player and player.position == Position.GOALKEEPER:
+                        # Вратарь — карточка не выпадает
+                        return match, None
+        
         if not match.whistle_deck:
             return match, None
         

@@ -990,6 +990,25 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
             "⚽ <b>СЕРИЯ ПЕНАЛЬТИ!</b>\n\n" + result_text,
             reply_markup=Keyboards.main_menu()
         )
+        
+        # В PvP — уведомляем соперника о результате
+        if match.match_type.value == "random":
+            await _notify_opponent_match_finished(callback.bot, match, user.id, "penalties")
+    
+    elif match.status == MatchStatus.FINISHED:
+        # Матч завершён
+        renderer = MatchRenderer()
+        result_text = renderer.render_match_result(match, user.id)
+        
+        await state.clear()
+        await callback.message.edit_text(
+            result_text,
+            reply_markup=Keyboards.main_menu()
+        )
+        
+        # В PvP — уведомляем соперника о результате
+        if match.match_type.value == "random":
+            await _notify_opponent_match_finished(callback.bot, match, user.id, "finished")
     else:
         # Следующий ход
         await _render_game_screen(callback, state)
@@ -999,6 +1018,39 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
             await _notify_opponent_new_turn(callback.bot, match, user.id)
     
     await callback.answer()
+
+
+async def _notify_opponent_match_finished(bot, match, user_id: UUID, finish_type: str):
+    """Уведомить соперника о завершении матча (PvP)"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    storage = get_storage()
+    
+    opponent_id = match.manager2_id if user_id == match.manager1_id else match.manager1_id
+    opponent = storage.get_user_by_id(opponent_id)
+    
+    if not opponent:
+        logger.warning(f"[PVP] Opponent not found for match finished notification")
+        return
+    
+    renderer = MatchRenderer()
+    result_text = renderer.render_match_result(match, opponent_id)
+    
+    if finish_type == "penalties":
+        text = "⚽ <b>СЕРИЯ ПЕНАЛЬТИ!</b>\n\n" + result_text
+    else:
+        text = result_text
+    
+    try:
+        await bot.send_message(
+            chat_id=opponent.telegram_id,
+            text=text,
+            reply_markup=Keyboards.main_menu()
+        )
+        logger.info(f"[PVP] Match finished notification sent to {opponent.telegram_id}")
+    except Exception as e:
+        logger.error(f"[PVP] Failed to notify opponent match finished: {e}")
 
 
 async def _notify_opponent_new_turn(bot, match, user_id: UUID):

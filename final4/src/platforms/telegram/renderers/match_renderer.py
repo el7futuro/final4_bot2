@@ -215,20 +215,23 @@ class MatchRenderer:
         
         # Получаем использованных игроков по фазам
         if match:
-            mt_players = []
-            et_players = []
-            
-            # Main Time игроки
+            # Main Time игроки — в ПОРЯДКЕ ХОДОВ (порядок в списке used_mt)
             used_mt = match.used_players_main_m1 if team.manager_id == match.manager1_id else match.used_players_main_m2
-            for player in team.players:
-                if str(player.id) in used_mt:
-                    mt_players.append(player)
+            mt_players = []
+            for player_id_str in used_mt:
+                for player in team.players:
+                    if str(player.id) == player_id_str:
+                        mt_players.append(player)
+                        break
             
-            # Extra Time игроки
+            # Extra Time игроки — в ПОРЯДКЕ ХОДОВ
             used_et = match.used_players_extra_m1 if team.manager_id == match.manager1_id else match.used_players_extra_m2
-            for player in team.players:
-                if str(player.id) in used_et:
-                    et_players.append(player)
+            et_players = []
+            for player_id_str in used_et:
+                for player in team.players:
+                    if str(player.id) == player_id_str:
+                        et_players.append(player)
+                        break
             
             # Статистика Main Time
             mt_saves = sum(p.stats.saves for p in mt_players)

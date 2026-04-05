@@ -26,20 +26,21 @@ class CardType(str, Enum):
 
 # Количество карточек каждого типа в колоде (всего 40)
 CARD_DISTRIBUTION = {
-    CardType.HAT_TRICK: 1,
-    CardType.DOUBLE: 1,
-    CardType.GOAL: 2,
-    CardType.OWN_GOAL: 1,
-    CardType.VAR: 2,
-    CardType.OFFSIDE: 2,
-    CardType.PENALTY: 2,
-    CardType.RED_CARD: 2,
-    CardType.YELLOW_CARD: 3,
-    CardType.FOUL: 6,
-    CardType.LOSS: 6,
-    CardType.INTERCEPTION: 6,
-    CardType.TACKLE: 6,
+    CardType.HAT_TRICK: 1,      # Хэт-трик: +3 гола
+    CardType.DOUBLE: 1,         # Дубль: +2 гола
+    CardType.GOAL: 2,           # Гол: +1 гол
+    CardType.OWN_GOAL: 2,       # Автогол: +1 гол сопернику
+    CardType.VAR: 2,            # ВАР: отменяет карточку соперника
+    CardType.OFFSIDE: 2,        # Офсайд: отменяет гол соперника
+    CardType.PENALTY: 3,        # Пенальти: интерактивный розыгрыш
+    CardType.RED_CARD: 2,       # Удаление: все действия = 0
+    CardType.YELLOW_CARD: 3,    # Предупреждение: -1 действие
+    CardType.FOUL: 8,           # Фол: -1 отбитие
+    CardType.LOSS: 8,           # Потеря: -1 передача
+    CardType.INTERCEPTION: 8,   # Перехват: +1 передача
+    CardType.TACKLE: 8,         # Отбор: +1 отбитие
 }
+# Всего: 1+1+2+2+2+2+3+2+3+8+8+8+8 = 50 карточек
 
 
 class CardTarget(str, Enum):

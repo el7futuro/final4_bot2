@@ -89,8 +89,13 @@
 ### P1 — Удаление/Предупреждение (Red/Yellow Card)
 - Проверено тестами: карточки корректно применяются к СОПЕРНИКУ
 - RED_CARD обнуляет все действия игрока соперника
-- YELLOW_CARD снимает 1 действие (приоритет: гол > передача > отбитие)
-- 9 новых unit-тестов подтверждают правильность
+- **YELLOW_CARD ПЕРЕРАБОТАН**: соперник теперь САМ выбирает какое действие потерять
+  - Интерактивный UI: кнопки "Снять гол", "Снять передачу", "Снять отбитие"
+  - PvBot: бот выбирает наименее ценное (отбитие > передача > гол)
+  - PvP: сопернику приходит уведомление с выбором
+  - VAR отменяет ожидающее предупреждение (снимает флаг ожидания)
+  - Новый метод `GameEngine.resolve_yellow_card(match, manager_id, action_type)`
+- 11 unit-тестов подтверждают правильность
 
 ### Прочее
 - Исправлен дублированный обработчик `cb_back_to_game`
@@ -101,7 +106,7 @@
 
 ## Тестирование
 
-**70 unit-тестов проходит**
+**72 unit-тестов проходит**
 
 ```bash
 cd /app/final4 && python -m pytest tests/unit/core/ -v
@@ -114,7 +119,7 @@ cd /app/final4 && python -m pytest tests/unit/core/ -v
 - `test_game_engine.py` — движок игры
 - `test_simultaneous_betting.py` — одновременные ставки
 - `test_match_history.py` — отслеживание статистики
-- `test_whistle_cards.py` — **НОВЫЙ**: карточки Red/Yellow + колода (9 тестов)
+- `test_whistle_cards.py` — карточки Red/Yellow + колода (11 тестов)
 
 ---
 
@@ -144,7 +149,7 @@ cd /app/final4 && python scripts/run_bot.py
 - `/app/final4/src/platforms/telegram/storage.py` — in-memory хранилище
 
 ### Тесты
-- `/app/final4/tests/unit/core/test_whistle_cards.py` — **НОВЫЙ**: 9 тестов
+- `/app/final4/tests/unit/core/test_whistle_cards.py` — 11 тестов
 
 ---
 

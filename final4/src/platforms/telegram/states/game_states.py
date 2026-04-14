@@ -31,6 +31,9 @@ class MatchStates(StatesGroup):
     penalty_kick = State()
     penalty_choice_made = State()  # Выбрал high/low, ждёт броска кубика
     
+    # Предупреждение (жёлтая карточка)
+    yellow_card_choice = State()  # Соперник выбирает какое действие снять
+    
     # Ожидание соперника (PvP)
     waiting_opponent = State()
 

@@ -309,6 +309,27 @@ class Keyboards:
         return builder.as_markup()
     
     @staticmethod
+    def yellow_card_choice(has_goals: bool, has_passes: bool, has_saves: bool) -> InlineKeyboardMarkup:
+        """Выбор действия для снятия при предупреждении"""
+        builder = InlineKeyboardBuilder()
+        if has_goals:
+            builder.row(InlineKeyboardButton(
+                text="⚽ Снять гол",
+                callback_data="yellow_card_action:goal"
+            ))
+        if has_passes:
+            builder.row(InlineKeyboardButton(
+                text="🎯 Снять передачу",
+                callback_data="yellow_card_action:pass"
+            ))
+        if has_saves:
+            builder.row(InlineKeyboardButton(
+                text="🛡 Снять отбитие",
+                callback_data="yellow_card_action:save"
+            ))
+        return builder.as_markup()
+    
+    @staticmethod
     def bet_player_select(players: List[Player]) -> InlineKeyboardMarkup:
         """Выбор игрока для ставки"""
         builder = InlineKeyboardBuilder()

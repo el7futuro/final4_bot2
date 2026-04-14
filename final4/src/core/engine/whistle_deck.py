@@ -113,20 +113,9 @@ class WhistleDeck:
             effect.player_removed = True
         
         elif card.card_type == CardType.YELLOW_CARD:
-            # Предупреждение: игрок СОПЕРНИКА теряет 1 случайное действие
+            # Предупреждение: СОПЕРНИК сам выбирает какое действие потерять
             effect.target_player_id = target_player_id
-            # Автоматически выбираем какое действие снять (приоритет: гол > передача > отбитие)
-            if target_player_id:
-                opponent_team = match.team2 if manager_id == match.manager1_id else match.team1
-                if opponent_team:
-                    opp_player = opponent_team.get_player_by_id(target_player_id)
-                    if opp_player:
-                        if opp_player.stats.goals > 0:
-                            effect.goals_removed = 1
-                        elif opp_player.stats.passes > 0:
-                            effect.passes_removed = 1
-                        elif opp_player.stats.saves > 0:
-                            effect.saves_removed = 1
+            effect.requires_yellow_card_choice = True
         
         # === ОСОБЫЕ ===
         elif card.card_type == CardType.PENALTY:
@@ -266,6 +255,19 @@ class WhistleDeck:
         if effect.requires_penalty_roll and match.current_turn:
             match.current_turn.waiting_for_penalty_roll = True
         
+        # Предупреждение — ждём выбор соперника
+        if effect.requires_yellow_card_choice and match.current_turn and effect.target_player_id:
+            match.current_turn.waiting_for_yellow_card_choice = True
+            # Определяем, кому принадлежит целевой игрок
+            for team in [match.team1, match.team2]:
+                if team:
+                    p = team.get_player_by_id(effect.target_player_id)
+                    if p:
+                        match.current_turn.yellow_card_target_manager_id = team.manager_id
+                        match.current_turn.yellow_card_target_player_id = effect.target_player_id
+                        match.current_turn.yellow_card_id = effect.card_id
+                        break
+        
         return match
     
     @staticmethod
@@ -347,6 +349,15 @@ class WhistleDeck:
                 stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
                 if stats:
                     stats.remove_goals(1, card_name)
+        
+        elif card.card_type == CardType.YELLOW_CARD:
+            # Предупреждение — отменяем ожидание выбора
+            if match.current_turn and match.current_turn.waiting_for_yellow_card_choice:
+                if match.current_turn.yellow_card_target_player_id == card.applied_to_player_id:
+                    match.current_turn.waiting_for_yellow_card_choice = False
+                    match.current_turn.yellow_card_target_manager_id = None
+                    match.current_turn.yellow_card_target_player_id = None
+                    match.current_turn.yellow_card_id = None
     
     @staticmethod
     def get_valid_targets(

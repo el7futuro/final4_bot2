@@ -894,6 +894,63 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
                 await callback.answer("⚽ Пенальти соперника!")
                 return
     
+    # Проверяем, нужен ли выбор по жёлтой карточке (предупреждение)
+    if match.current_turn and match.current_turn.waiting_for_yellow_card_choice:
+        from src.core.engine.game_engine import BOT_USER_ID
+        
+        target_mgr = match.current_turn.yellow_card_target_manager_id
+        target_pid = match.current_turn.yellow_card_target_player_id
+        
+        if target_mgr and target_pid:
+            # Находим целевого игрока и его доступные действия
+            target_team = match.get_team(target_mgr)
+            target_player = target_team.get_player_by_id(target_pid) if target_team else None
+            
+            if target_player:
+                has_goals = target_player.stats.goals > 0
+                has_passes = target_player.stats.passes > 0
+                has_saves = target_player.stats.saves > 0
+                
+                if not has_goals and not has_passes and not has_saves:
+                    # Нет действий — карточка ничего не делает
+                    match.current_turn.waiting_for_yellow_card_choice = False
+                    match.current_turn.yellow_card_target_manager_id = None
+                    match.current_turn.yellow_card_target_player_id = None
+                    match.current_turn.yellow_card_id = None
+                    storage.save_match(match)
+                    text += "\n\n🟡 <b>Предупреждение!</b> У игрока нет действий — карточка не повлияла."
+                elif target_mgr == BOT_USER_ID:
+                    # Бот выбирает автоматически (наименее ценное: отбитие > передача > гол)
+                    if has_saves:
+                        bot_action = "save"
+                    elif has_passes:
+                        bot_action = "pass"
+                    else:
+                        bot_action = "goal"
+                    match = storage.engine.resolve_yellow_card(match, BOT_USER_ID, bot_action)
+                    storage.save_match(match)
+                    action_names = {"save": "отбитие", "pass": "передачу", "goal": "гол"}
+                    text += f"\n\n🟡 <b>Предупреждение!</b> Бот потерял {action_names[bot_action]}."
+                elif target_mgr == user.id:
+                    # Предупреждение СВОЕМУ игроку — показываем выбор
+                    text += f"\n\n🟡 <b>ПРЕДУПРЕЖДЕНИЕ!</b>\nВаш игрок <b>{target_player.name}</b> получил жёлтую карточку.\nВыберите, какое действие потерять:"
+                    
+                    await state.set_state(MatchStates.yellow_card_choice)
+                    await callback.message.edit_text(
+                        text,
+                        reply_markup=Keyboards.yellow_card_choice(has_goals, has_passes, has_saves)
+                    )
+                    await callback.answer("🟡 Предупреждение!")
+                    return
+                else:
+                    # PvP — нужно отправить выбор СОПЕРНИКУ
+                    if match.match_type.value == "random":
+                        await _notify_yellow_card_owner_with_choice(callback.bot, match, target_mgr)
+                        text += f"\n\n🟡 <b>ПРЕДУПРЕЖДЕНИЕ СОПЕРНИКА!</b>\n⏳ Ожидаем выбор соперника..."
+                        await callback.message.edit_text(text, reply_markup=None)
+                        await callback.answer("🟡 Предупреждение соперника!")
+                        return
+    
     await state.set_state(MatchStates.in_game)
     await callback.message.edit_text(
         text,
@@ -1041,6 +1098,142 @@ async def _notify_opponent_penalty_result(bot, match, penalty_user_id: UUID, suc
         logger.info(f"[PVP] Penalty result sent to opponent {opponent.telegram_id}")
     except Exception as e:
         logger.error(f"[PVP] Failed to notify opponent penalty result: {e}")
+
+
+# ==================== ЖЁЛТАЯ КАРТОЧКА (ПРЕДУПРЕЖДЕНИЕ) ====================
+
+
+async def _notify_yellow_card_owner_with_choice(bot, match, target_manager_id: UUID):
+    """Отправить владельцу игрока выбор, какое действие потерять (PvP)"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    storage = get_storage()
+    owner = storage.get_user_by_id(target_manager_id)
+    
+    if not owner:
+        logger.warning(f"[PVP] Yellow card target manager not found: {target_manager_id}")
+        return
+    
+    # Находим целевого игрока
+    target_pid = match.current_turn.yellow_card_target_player_id
+    target_team = match.get_team(target_manager_id)
+    target_player = target_team.get_player_by_id(target_pid) if target_team and target_pid else None
+    
+    if not target_player:
+        return
+    
+    has_goals = target_player.stats.goals > 0
+    has_passes = target_player.stats.passes > 0
+    has_saves = target_player.stats.saves > 0
+    
+    text = (
+        f"🟡 <b>ПРЕДУПРЕЖДЕНИЕ!</b>\n\n"
+        f"Ваш игрок <b>{target_player.name}</b> получил жёлтую карточку.\n"
+        f"Текущие действия: "
+    )
+    stats_parts = []
+    if target_player.stats.goals > 0:
+        stats_parts.append(f"⚽{target_player.stats.goals}")
+    if target_player.stats.passes > 0:
+        stats_parts.append(f"🎯{target_player.stats.passes}")
+    if target_player.stats.saves > 0:
+        stats_parts.append(f"🛡{target_player.stats.saves}")
+    text += " ".join(stats_parts) if stats_parts else "нет"
+    text += "\n\nВыберите, какое действие потерять:"
+    
+    try:
+        await bot.send_message(
+            chat_id=owner.telegram_id,
+            text=text,
+            reply_markup=Keyboards.yellow_card_choice(has_goals, has_passes, has_saves)
+        )
+        logger.info(f"[PVP] Yellow card choice sent to {owner.telegram_id}")
+    except Exception as e:
+        logger.error(f"[PVP] Failed to notify yellow card owner: {e}")
+
+
+@router.callback_query(F.data.startswith("yellow_card_action:"))
+async def cb_yellow_card_action(callback: CallbackQuery, state: FSMContext):
+    """Соперник выбрал, какое действие потерять при предупреждении"""
+    action_type = callback.data.split(":")[1]  # "goal", "pass", "save"
+    
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    # Находим матч
+    data = await state.get_data()
+    match_id = data.get("match_id")
+    
+    if match_id:
+        match = storage.get_match(UUID(match_id))
+    else:
+        match = storage.get_user_active_match(user.id)
+        if match:
+            await state.update_data(match_id=str(match.id))
+    
+    if not match:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    if not match.current_turn or not match.current_turn.waiting_for_yellow_card_choice:
+        await callback.answer("Нет ожидающего предупреждения", show_alert=True)
+        return
+    
+    if match.current_turn.yellow_card_target_manager_id != user.id:
+        await callback.answer("Не ваш выбор", show_alert=True)
+        return
+    
+    try:
+        match = storage.engine.resolve_yellow_card(match, user.id, action_type)
+        storage.save_match(match)
+    except ValueError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    
+    action_names = {"goal": "гол", "pass": "передачу", "save": "отбитие"}
+    result_text = f"🟡 Вы потеряли {action_names.get(action_type, action_type)}."
+    
+    await state.set_state(MatchStates.in_game)
+    await callback.message.edit_text(
+        result_text,
+        reply_markup=Keyboards.game_actions_after_roll()
+    )
+    await callback.answer(f"🟡 Потеряно: {action_names.get(action_type, action_type)}")
+    
+    # В PvP — уведомляем соперника о результате
+    if match.match_type.value == "random":
+        await _notify_opponent_yellow_card_result(callback.bot, match, user.id, action_type)
+
+
+async def _notify_opponent_yellow_card_result(bot, match, affected_manager_id: UUID, action_type: str):
+    """Уведомить соперника о результате предупреждения"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    storage = get_storage()
+    
+    opponent_id = match.manager2_id if affected_manager_id == match.manager1_id else match.manager1_id
+    opponent = storage.get_user_by_id(opponent_id)
+    
+    if not opponent:
+        return
+    
+    action_names = {"goal": "гол", "pass": "передачу", "save": "отбитие"}
+    text = f"🟡 <b>Предупреждение!</b>\nСоперник потерял {action_names.get(action_type, action_type)}."
+    
+    try:
+        await bot.send_message(
+            chat_id=opponent.telegram_id,
+            text=text,
+            reply_markup=Keyboards.game_actions_after_roll()
+        )
+        logger.info(f"[PVP] Yellow card result sent to opponent {opponent.telegram_id}")
+    except Exception as e:
+        logger.error(f"[PVP] Failed to notify opponent yellow card result: {e}")
 
 
 @router.callback_query(F.data == "end_turn")

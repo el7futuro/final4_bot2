@@ -687,6 +687,80 @@ class GameEngine:
         
         return match, success, dice_value
     
+    def resolve_yellow_card(
+        self,
+        match: Match,
+        manager_id: UUID,
+        action_type: str  # "goal", "pass", "save"
+    ) -> Match:
+        """
+        Разрешить предупреждение (жёлтую карточку).
+        
+        СОПЕРНИК сам выбирает, какое полезное действие потерять.
+        
+        Args:
+            match: Матч
+            manager_id: ID менеджера, чей игрок получил предупреждение (он выбирает)
+            action_type: "goal", "pass" или "save"
+        
+        Returns:
+            match
+        """
+        if not match.current_turn:
+            raise ValueError("Ход не начат")
+        
+        if not match.current_turn.waiting_for_yellow_card_choice:
+            raise ValueError("Нет ожидающего предупреждения")
+        
+        if match.current_turn.yellow_card_target_manager_id != manager_id:
+            raise ValueError("Не ваш выбор")
+        
+        player_id = match.current_turn.yellow_card_target_player_id
+        if not player_id:
+            raise ValueError("Целевой игрок не найден")
+        
+        # Находим игрока
+        team = match.get_team(manager_id)
+        if not team:
+            raise ValueError("Команда не найдена")
+        
+        player = team.get_player_by_id(player_id)
+        if not player:
+            raise ValueError("Игрок не найден")
+        
+        # Проверяем что у игрока есть выбранное действие
+        if action_type == "goal" and player.stats.goals <= 0:
+            raise ValueError("У игрока нет голов")
+        elif action_type == "pass" and player.stats.passes <= 0:
+            raise ValueError("У игрока нет передач")
+        elif action_type == "save" and player.stats.saves <= 0:
+            raise ValueError("У игрока нет отбитий")
+        elif action_type not in ("goal", "pass", "save"):
+            raise ValueError("Неверный тип действия")
+        
+        # Снимаем действие
+        player.remove_action(action_type)
+        
+        # Записываем в историю
+        history = self.get_match_history(match)
+        if history:
+            stats = history.get_player_stats(manager_id, player_id, match.manager1_id)
+            if stats:
+                if action_type == "goal":
+                    stats.remove_goals(1, "предупреждение")
+                elif action_type == "pass":
+                    stats.remove_passes(1, "предупреждение")
+                elif action_type == "save":
+                    stats.remove_saves(1, "предупреждение")
+        
+        # Очищаем флаги ожидания
+        match.current_turn.waiting_for_yellow_card_choice = False
+        match.current_turn.yellow_card_target_manager_id = None
+        match.current_turn.yellow_card_target_player_id = None
+        match.current_turn.yellow_card_id = None
+        
+        return match
+    
     def apply_whistle_card(
         self,
         match: Match,

@@ -145,3 +145,4 @@ class CardEffect(BaseModel):
     player_removed: bool = Field(default=False)
     card_cancelled_id: Optional[UUID] = None
     requires_penalty_roll: bool = Field(default=False)
+    requires_yellow_card_choice: bool = Field(default=False)

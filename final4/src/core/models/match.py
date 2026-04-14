@@ -70,6 +70,10 @@ class TurnState(BaseModel):
     card_id: Optional[UUID] = None
     card_applied: bool = Field(default=False)
     waiting_for_penalty_roll: bool = Field(default=False)
+    waiting_for_yellow_card_choice: bool = Field(default=False)
+    yellow_card_target_manager_id: Optional[UUID] = None
+    yellow_card_target_player_id: Optional[UUID] = None
+    yellow_card_id: Optional[UUID] = None
     
     def both_ready(self) -> bool:
         """Оба игрока сделали ставки"""

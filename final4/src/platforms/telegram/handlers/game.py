@@ -330,10 +330,15 @@ async def _handle_make_bet(callback: CallbackQuery, state: FSMContext, match, us
                 await callback.answer("Нет доступных типов ставок", show_alert=True)
                 return
             
+            # Проверяем есть ли уже ставки в этом ходе
+            if is_user_m1:
+                has_bets = len(turn.manager1_bets) > 0 if turn else False
+            else:
+                has_bets = len(turn.manager2_bets) > 0 if turn else False
+            
             await state.update_data(bet_player_id=current_bet_player_id)
             await state.set_state(MatchStates.selecting_bet_type)
             
-            # Показываем имя игрока
             await callback.message.edit_text(
                 f"🎯 <b>Игрок: {player.name}</b>\n"
                 f"<i>({player.position.value})</i>\n\n"
@@ -341,7 +346,7 @@ async def _handle_make_bet(callback: CallbackQuery, state: FSMContext, match, us
                 "• <b>Чёт/Нечёт</b> → Отбития\n"
                 "• <b>Больше/Меньше</b> → Передачи\n"
                 "• <b>Точное число</b> → Гол",
-                reply_markup=Keyboards.bet_type_select(available_types)
+                reply_markup=Keyboards.bet_type_select(available_types, has_existing_bets=has_bets)
             )
             await callback.answer()
             return
@@ -430,7 +435,7 @@ async def cb_bet_player_selected(callback: CallbackQuery, state: FSMContext):
         "• <b>Больше/Меньше</b> — при выигрыше игрок получает передачи\n"
         "• <b>Точное число</b> — при выигрыше игрок забивает гол"
         + info,
-        reply_markup=Keyboards.bet_type_select(available_types)
+        reply_markup=Keyboards.bet_type_select(available_types, has_existing_bets=False)
     )
     await callback.answer()
 
@@ -487,10 +492,16 @@ async def cb_back_bet_type(callback: CallbackQuery, state: FSMContext):
     
     available_types = storage.engine.get_available_bet_types(match, user.id, UUID(player_id))
     
+    # Проверяем есть ли ставки
+    is_m1 = match.manager1_id == user.id
+    has_bets = False
+    if match.current_turn:
+        has_bets = len(match.current_turn.manager1_bets if is_m1 else match.current_turn.manager2_bets) > 0
+    
     await state.set_state(MatchStates.selecting_bet_type)
     await callback.message.edit_text(
         "🎯 <b>Выберите тип ставки:</b>",
-        reply_markup=Keyboards.bet_type_select(available_types)
+        reply_markup=Keyboards.bet_type_select(available_types, has_existing_bets=has_bets)
     )
     await callback.answer()
 
@@ -550,9 +561,9 @@ async def cb_bet_value_selected(callback: CallbackQuery, state: FSMContext):
     await _render_game_screen(callback, state)
 
 
-@router.callback_query(F.data == "cancel_bets", MatchStates.in_game)
+@router.callback_query(F.data == "cancel_bets")
 async def cb_cancel_bets(callback: CallbackQuery, state: FSMContext):
-    """Отменить все ставки текущего хода"""
+    """Отменить все ставки текущего хода (из любого состояния)"""
     data = await state.get_data()
     match_id = data.get("match_id")
     
@@ -562,12 +573,18 @@ async def cb_cancel_bets(callback: CallbackQuery, state: FSMContext):
         username=callback.from_user.full_name or "Игрок"
     )
     
-    match = storage.get_match(UUID(match_id))
+    if not match_id:
+        match = storage.get_user_active_match(user.id)
+        if match:
+            match_id = str(match.id)
+            await state.update_data(match_id=match_id)
+    else:
+        match = storage.get_match(UUID(match_id))
+    
     if not match:
         await callback.answer("Матч не найден", show_alert=True)
         return
     
-    # Отменяем ставки
     try:
         match = storage.engine.cancel_turn_bets(match, user.id)
         storage.save_match(match)
@@ -576,6 +593,7 @@ async def cb_cancel_bets(callback: CallbackQuery, state: FSMContext):
         await callback.answer(str(e), show_alert=True)
         return
     
+    await state.set_state(MatchStates.in_game)
     await _render_game_screen(callback, state)
 
 

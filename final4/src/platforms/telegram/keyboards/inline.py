@@ -356,7 +356,7 @@ class Keyboards:
         return builder.as_markup()
     
     @staticmethod
-    def bet_type_select(available_types: List[BetType]) -> InlineKeyboardMarkup:
+    def bet_type_select(available_types: List[BetType], has_existing_bets: bool = False) -> InlineKeyboardMarkup:
         """Выбор типа ставки"""
         builder = InlineKeyboardBuilder()
         
@@ -372,9 +372,15 @@ class Keyboards:
                 callback_data=f"bet_type:{bt.value}"
             ))
         
+        if has_existing_bets:
+            builder.row(InlineKeyboardButton(
+                text="🔄 Отменить ставки",
+                callback_data="cancel_bets"
+            ))
+        
         builder.row(InlineKeyboardButton(
             text="« Назад",
-            callback_data="make_bet"
+            callback_data="back_to_game"
         ))
         
         return builder.as_markup()

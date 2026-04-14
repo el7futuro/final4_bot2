@@ -63,10 +63,11 @@ class BetTracker:
             if player.position == Position.FORWARD:
                 raise ValueError("Форварды не могут делать ставку на чёт/нечёт")
             
-            # Лимит 6 ставок на чёт/нечёт за матч
-            even_odd_count = self._count_even_odd_bets(match, manager_id)
-            if even_odd_count >= 6:
-                raise ValueError("Максимум 6 ставок на чёт/нечёт в матче")
+            # Лимит 6 ставок на чёт/нечёт ТОЛЬКО в основное время
+            if match.phase == MatchPhase.MAIN_TIME:
+                even_odd_count = self._count_even_odd_bets(match, manager_id)
+                if even_odd_count >= 6:
+                    raise ValueError("Максимум 6 ставок на чёт/нечёт в основное время")
         
         # 5. Вратарь — только чёт/нечёт и только 1 раз за матч
         if player.position == Position.GOALKEEPER:

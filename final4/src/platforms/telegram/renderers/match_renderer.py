@@ -206,83 +206,42 @@ class MatchRenderer:
     
     @staticmethod
     def render_team_stats(team: Team, match: Match = None, is_opponent: bool = False) -> str:
-        """Отрендерить статистику команды с разделением на Main Time и Extra Time"""
+        """Отрендерить статистику команды — только счёт и полезные действия"""
         team.calculate_stats()
         
         prefix = "🔴 Соперник" if is_opponent else "🔵 Ваша команда"
         
-        lines = [f"<b>{prefix}: {team.name}</b>"]
+        lines = [f"<b>{prefix}</b>"]
         
-        # Получаем использованных игроков по фазам
         if match:
-            # Main Time игроки — в ПОРЯДКЕ ХОДОВ (порядок в списке used_mt)
-            used_mt = match.used_players_main_m1 if team.manager_id == match.manager1_id else match.used_players_main_m2
-            mt_players = []
-            for player_id_str in used_mt:
-                for player in team.players:
-                    if str(player.id) == player_id_str:
-                        mt_players.append(player)
+            is_m1 = team.manager_id == match.manager1_id
+            used_mt = match.used_players_main_m1 if is_m1 else match.used_players_main_m2
+            used_et = match.used_players_extra_m1 if is_m1 else match.used_players_extra_m2
+            
+            # Main Time
+            mt_saves = mt_passes = mt_goals = 0
+            for pid in used_mt:
+                for p in team.players:
+                    if str(p.id) == pid:
+                        mt_saves += p.stats.saves
+                        mt_passes += p.stats.passes
+                        mt_goals += p.stats.goals
                         break
+            lines.append(f"⏱ ОВ: 🛡{mt_saves} | 🎯{mt_passes} | ⚽{mt_goals}")
             
-            # Extra Time игроки — в ПОРЯДКЕ ХОДОВ
-            used_et = match.used_players_extra_m1 if team.manager_id == match.manager1_id else match.used_players_extra_m2
-            et_players = []
-            for player_id_str in used_et:
-                for player in team.players:
-                    if str(player.id) == player_id_str:
-                        et_players.append(player)
-                        break
-            
-            # Статистика Main Time
-            mt_saves = sum(p.stats.saves for p in mt_players)
-            mt_passes = sum(p.stats.passes for p in mt_players)
-            mt_goals = sum(p.stats.goals for p in mt_players)
-            
-            lines.append(f"\n<b>⏱ Основное время:</b>")
-            lines.append(f"  🛡 {mt_saves} | 🎯 {mt_passes} | ⚽ {mt_goals}")
-            
-            if mt_players:
-                for i, p in enumerate(mt_players, 1):
-                    stats_parts = []
-                    if p.stats.saves > 0:
-                        stats_parts.append(f"{p.stats.saves}🛡")
-                    if p.stats.passes > 0:
-                        stats_parts.append(f"{p.stats.passes}🎯")
-                    if p.stats.goals > 0:
-                        stats_parts.append(f"{p.stats.goals}⚽")
-                    # Показываем ВСЕХ игроков, даже с 0 действиями
-                    if stats_parts:
-                        lines.append(f"    {i}. {p.name}: {' '.join(stats_parts)}")
-                    else:
-                        lines.append(f"    {i}. {p.name}: —")
-            
-            # Статистика Extra Time (если есть)
-            if et_players:
-                et_saves = sum(p.stats.saves for p in et_players)
-                et_passes = sum(p.stats.passes for p in et_players)
-                et_goals = sum(p.stats.goals for p in et_players)
-                
-                lines.append(f"\n<b>⏱ Дополнительное время:</b>")
-                lines.append(f"  🛡 {et_saves} | 🎯 {et_passes} | ⚽ {et_goals}")
-                
-                for i, p in enumerate(et_players, 1):
-                    stats_parts = []
-                    if p.stats.saves > 0:
-                        stats_parts.append(f"{p.stats.saves}🛡")
-                    if p.stats.passes > 0:
-                        stats_parts.append(f"{p.stats.passes}🎯")
-                    if p.stats.goals > 0:
-                        stats_parts.append(f"{p.stats.goals}⚽")
-                    # Показываем ВСЕХ игроков, даже с 0 действиями
-                    if stats_parts:
-                        lines.append(f"    {i}. {p.name}: {' '.join(stats_parts)}")
-                    else:
-                        lines.append(f"    {i}. {p.name}: —")
+            # Extra Time
+            if used_et:
+                et_saves = et_passes = et_goals = 0
+                for pid in used_et:
+                    for p in team.players:
+                        if str(p.id) == pid:
+                            et_saves += p.stats.saves
+                            et_passes += p.stats.passes
+                            et_goals += p.stats.goals
+                            break
+                lines.append(f"⏱ ДВ: 🛡{et_saves} | 🎯{et_passes} | ⚽{et_goals}")
         else:
-            # Без матча — общая статистика
-            lines.append(f"🛡 Отбития: {team.stats.total_saves}")
-            lines.append(f"🎯 Передачи: {team.stats.total_passes}")
-            lines.append(f"⚽ Голы: {team.stats.total_goals}")
+            lines.append(f"🛡{team.stats.total_saves} | 🎯{team.stats.total_passes} | ⚽{team.stats.total_goals}")
         
         return "\n".join(lines)
     
@@ -653,11 +612,15 @@ class MatchRenderer:
         for bet in match.bets:
             turn_num = bet.turn_number
             if turn_num not in turns_data:
-                turns_data[turn_num] = {"viewer": [], "opponent": []}
+                turns_data[turn_num] = {"viewer": [], "opponent": [], "dice": None}
             
             is_viewer_bet = bet.manager_id == viewer_id
             key = "viewer" if is_viewer_bet else "opponent"
             turns_data[turn_num][key].append(bet)
+            
+            # Сохраняем результат кубика из ставки (все ставки хода имеют один dice_result)
+            if bet.dice_result:
+                turns_data[turn_num]["dice"] = bet.dice_result
         
         # Получаем использованных игроков по порядку
         viewer_used_mt = match.used_players_main_m1 if is_viewer_m1 else match.used_players_main_m2
@@ -667,9 +630,11 @@ class MatchRenderer:
         
         # Main Time
         if viewer_used_mt:
-            lines.append("\n<b>⏱ ОСНОВНОЕ ВРЕМЯ</b>")
+            lines.append("<b>⏱ ОСНОВНОЕ ВРЕМЯ</b>")
             for turn_idx, player_id_str in enumerate(viewer_used_mt, 1):
-                turn_lines = [f"\n<b>Ход {turn_idx}</b>"]
+                # Кубик
+                dice_val = turns_data.get(turn_idx, {}).get("dice", "?")
+                turn_lines = [f"\n<b>Ход {turn_idx}</b> 🎲 {dice_val}"]
                 
                 # Находим игрока
                 viewer_player = next((p for p in viewer_team.players if str(p.id) == player_id_str), None)
@@ -677,7 +642,7 @@ class MatchRenderer:
                 opp_player = next((p for p in opponent_team.players if str(p.id) == opp_player_id), None) if opp_player_id else None
                 
                 if viewer_player:
-                    turn_lines.append(f"  🔵 Вы: {viewer_player.name}")
+                    turn_lines.append(f"  🔵 {viewer_player.name}")
                     # Ставки
                     if turn_idx in turns_data:
                         for bet in turns_data[turn_idx]["viewer"]:
@@ -685,44 +650,29 @@ class MatchRenderer:
                             outcome = "✅" if bet.outcome == BetOutcome.WON else "❌"
                             turn_lines.append(f"      {bet_str} {outcome}")
                     # Итог
-                    stats = []
-                    if viewer_player.stats.saves > 0:
-                        stats.append(f"{viewer_player.stats.saves}🛡")
-                    if viewer_player.stats.passes > 0:
-                        stats.append(f"{viewer_player.stats.passes}🎯")
-                    if viewer_player.stats.goals > 0:
-                        stats.append(f"{viewer_player.stats.goals}⚽")
-                    if stats:
-                        turn_lines.append(f"      → {' '.join(stats)}")
-                    else:
-                        turn_lines.append(f"      → —")
+                    stats = MatchRenderer._format_player_stats(viewer_player)
+                    turn_lines.append(f"      → {stats}")
                 
                 if opp_player:
-                    turn_lines.append(f"  🔴 Соперник: {opp_player.name}")
-                    # Ставки
+                    turn_lines.append(f"  🔴 {opp_player.name}")
                     if turn_idx in turns_data:
                         for bet in turns_data[turn_idx]["opponent"]:
                             bet_str = MatchRenderer._format_bet(bet)
                             outcome = "✅" if bet.outcome == BetOutcome.WON else "❌"
                             turn_lines.append(f"      {bet_str} {outcome}")
-                    # Итог
-                    stats = []
-                    if opp_player.stats.saves > 0:
-                        stats.append(f"{opp_player.stats.saves}🛡")
-                    if opp_player.stats.passes > 0:
-                        stats.append(f"{opp_player.stats.passes}🎯")
-                    if opp_player.stats.goals > 0:
-                        stats.append(f"{opp_player.stats.goals}⚽")
-                    if stats:
-                        turn_lines.append(f"      → {' '.join(stats)}")
-                    else:
-                        turn_lines.append(f"      → —")
+                    stats = MatchRenderer._format_player_stats(opp_player)
+                    turn_lines.append(f"      → {stats}")
                 
                 # Карточки этого хода
                 for card in match.whistle_cards_drawn:
                     if card.turn_applied == turn_idx:
                         who = "🔵" if card.applied_by_manager_id == viewer_id else "🔴"
-                        turn_lines.append(f"  🃏 {who} {card.get_display_name()}")
+                        card_info = card.get_display_name()
+                        # Результат пенальти
+                        if card.card_type.value == "penalty" and card.penalty_scored is not None:
+                            pen_result = "⚽ГОЛ" if card.penalty_scored else "❌МИМО"
+                            card_info += f" ({pen_result})"
+                        turn_lines.append(f"  🃏 {who} {card_info}")
                 
                 lines.extend(turn_lines)
         
@@ -730,44 +680,49 @@ class MatchRenderer:
         if viewer_used_et:
             lines.append("\n\n<b>⏱ ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ</b>")
             for turn_idx, player_id_str in enumerate(viewer_used_et, 1):
-                et_turn_num = 11 + turn_idx  # ET ходы после 11 ходов MT
-                turn_lines = [f"\n<b>Ход ET-{turn_idx}</b>"]
+                et_turn_num = 11 + turn_idx
+                dice_val = turns_data.get(et_turn_num, {}).get("dice", "?")
+                turn_lines = [f"\n<b>Ход ET-{turn_idx}</b> 🎲 {dice_val}"]
                 
                 viewer_player = next((p for p in viewer_team.players if str(p.id) == player_id_str), None)
                 opp_player_id = opponent_used_et[turn_idx - 1] if turn_idx - 1 < len(opponent_used_et) else None
                 opp_player = next((p for p in opponent_team.players if str(p.id) == opp_player_id), None) if opp_player_id else None
                 
                 if viewer_player:
-                    turn_lines.append(f"  🔵 Вы: {viewer_player.name}")
-                    stats = []
-                    if viewer_player.stats.saves > 0:
-                        stats.append(f"{viewer_player.stats.saves}🛡")
-                    if viewer_player.stats.passes > 0:
-                        stats.append(f"{viewer_player.stats.passes}🎯")
-                    if viewer_player.stats.goals > 0:
-                        stats.append(f"{viewer_player.stats.goals}⚽")
-                    if stats:
-                        turn_lines.append(f"      → {' '.join(stats)}")
-                    else:
-                        turn_lines.append(f"      → —")
+                    turn_lines.append(f"  🔵 {viewer_player.name}")
+                    stats = MatchRenderer._format_player_stats(viewer_player)
+                    turn_lines.append(f"      → {stats}")
                 
                 if opp_player:
-                    turn_lines.append(f"  🔴 Соперник: {opp_player.name}")
-                    stats = []
-                    if opp_player.stats.saves > 0:
-                        stats.append(f"{opp_player.stats.saves}🛡")
-                    if opp_player.stats.passes > 0:
-                        stats.append(f"{opp_player.stats.passes}🎯")
-                    if opp_player.stats.goals > 0:
-                        stats.append(f"{opp_player.stats.goals}⚽")
-                    if stats:
-                        turn_lines.append(f"      → {' '.join(stats)}")
-                    else:
-                        turn_lines.append(f"      → —")
+                    turn_lines.append(f"  🔴 {opp_player.name}")
+                    stats = MatchRenderer._format_player_stats(opp_player)
+                    turn_lines.append(f"      → {stats}")
+                
+                # Карточки ET
+                for card in match.whistle_cards_drawn:
+                    if card.turn_applied == et_turn_num:
+                        who = "🔵" if card.applied_by_manager_id == viewer_id else "🔴"
+                        card_info = card.get_display_name()
+                        if card.card_type.value == "penalty" and card.penalty_scored is not None:
+                            pen_result = "⚽ГОЛ" if card.penalty_scored else "❌МИМО"
+                            card_info += f" ({pen_result})"
+                        turn_lines.append(f"  🃏 {who} {card_info}")
                 
                 lines.extend(turn_lines)
         
         return "\n".join(lines)
+    
+    @staticmethod
+    def _format_player_stats(player) -> str:
+        """Форматировать статистику игрока"""
+        stats = []
+        if player.stats.saves > 0:
+            stats.append(f"{player.stats.saves}🛡")
+        if player.stats.passes > 0:
+            stats.append(f"{player.stats.passes}🎯")
+        if player.stats.goals > 0:
+            stats.append(f"{player.stats.goals}⚽")
+        return " ".join(stats) if stats else "—"
     
     @staticmethod
     def _format_bet(bet: Bet) -> str:

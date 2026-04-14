@@ -102,7 +102,8 @@ class WhistleDeck:
                 c for c in match.whistle_cards_drawn
                 if c.applied_by_manager_id == opponent_id
                 and c.turn_applied == current_turn
-                and not c.is_used
+                and c.is_used
+                and not c.var_cancelled
             ]
             if opponent_cards:
                 effect.card_cancelled_id = opponent_cards[-1].id
@@ -140,6 +141,9 @@ class WhistleDeck:
             history: История матча для записи статистики (опционально)
         """
         card_name = effect.card_type.value if effect.card_type else "карточка"
+        
+        import logging
+        logger = logging.getLogger(__name__)
         
         # Находим целевого игрока и его менеджера
         if effect.target_player_id:
@@ -217,7 +221,9 @@ class WhistleDeck:
                 
                 # Удаление игрока (красная карточка)
                 if effect.player_removed:
+                    logger.info(f"[RED_CARD] Clearing stats of player {player.name} (id={player.id}), manager={player_manager_id}, stats_before={player.stats}")
                     player.clear_stats()
+                    logger.info(f"[RED_CARD] Player {player.name} cleared. is_available={player.is_available}")
                     if history and player_manager_id:
                         stats = history.get_player_stats(
                             player_manager_id, player.id, match.manager1_id
@@ -358,6 +364,14 @@ class WhistleDeck:
                     match.current_turn.yellow_card_target_manager_id = None
                     match.current_turn.yellow_card_target_player_id = None
                     match.current_turn.yellow_card_id = None
+        
+        elif card.card_type == CardType.RED_CARD:
+            # Удаление — восстанавливаем игрока со всеми статами
+            player.restore_stats_after_var()
+            if history and player_manager_id:
+                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
+                if stats:
+                    stats.clear_all(card_name)
     
     @staticmethod
     def get_valid_targets(

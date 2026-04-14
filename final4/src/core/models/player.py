@@ -3,6 +3,7 @@
 
 from enum import Enum
 from uuid import UUID, uuid4
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -57,10 +58,21 @@ class Player(BaseModel):
             return True
         return False
 
+    # Snapshot статов до удаления (для отката через VAR)
+    stats_before_red_card: Optional[PlayerStats] = None
+
     def clear_stats(self) -> None:
         """Обнулить все действия (удаление)"""
+        self.stats_before_red_card = self.stats.model_copy()
         self.stats = PlayerStats()
         self.is_available = False
+    
+    def restore_stats_after_var(self) -> None:
+        """Восстановить статы после отмены удаления через VAR"""
+        if self.stats_before_red_card:
+            self.stats = self.stats_before_red_card
+            self.stats_before_red_card = None
+        self.is_available = True
 
     def get_total_actions(self) -> int:
         """Общее количество действий"""

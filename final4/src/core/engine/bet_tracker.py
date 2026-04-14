@@ -272,14 +272,11 @@ class BetTracker:
             
             if existing_bet_type is None:
                 # ПЕРВАЯ ставка — доступны все варианты
-                # Точное число (гол) — всегда доступно в Extra Time
                 available.append(BetType.EXACT_NUMBER)
                 
-                # Чёт/нечёт — для всех кроме форвардов
+                # Чёт/нечёт — для всех кроме форвардов, БЕЗ лимита в ET
                 if player.position != Position.FORWARD:
-                    even_odd_count = self._count_even_odd_bets(match, manager_id)
-                    if even_odd_count < 6:
-                        available.append(BetType.EVEN_ODD)
+                    available.append(BetType.EVEN_ODD)
                 
                 # Больше/меньше — всегда
                 available.append(BetType.HIGH_LOW)
@@ -288,9 +285,7 @@ class BetTracker:
                 if existing_bet_type == BetType.EXACT_NUMBER:
                     # Первая была на гол → вторая ОБЯЗАТЕЛЬНО позиционная
                     if player.position != Position.FORWARD:
-                        even_odd_count = self._count_even_odd_bets(match, manager_id)
-                        if even_odd_count < 6:
-                            available.append(BetType.EVEN_ODD)
+                        available.append(BetType.EVEN_ODD)
                     available.append(BetType.HIGH_LOW)
                 else:
                     # Первая была НЕ на гол → вторая ОБЯЗАТЕЛЬНО на гол

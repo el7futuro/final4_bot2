@@ -1317,6 +1317,10 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
             result_text,
             reply_markup=Keyboards.match_finished_menu()
         )
+        
+        # В PvP — уведомляем соперника о результате
+        if match.match_type.value == "random":
+            await _notify_opponent_match_finished(callback.bot, match, user.id, "finished")
     elif match.status == MatchStatus.EXTRA_TIME:
         await callback.message.edit_text(
             "⏱ <b>ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ!</b>\n\n"

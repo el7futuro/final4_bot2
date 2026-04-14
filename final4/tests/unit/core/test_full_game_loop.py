@@ -310,10 +310,10 @@ class TestPenalties:
     def test_penalties_after_et_draw(self):
         """Серия пенальти после ничьей в ET"""
         from src.platforms.telegram.handlers.bot_logic import auto_penalties
-        from src.platforms.telegram.storage import InMemoryStorage
+        from src.platforms.telegram.storage import HybridStorage
         
         random.seed(777)
-        storage = InMemoryStorage()
+        storage = HybridStorage()
         engine = storage.engine
         m1 = uuid4(); m2 = uuid4()
         

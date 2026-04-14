@@ -51,6 +51,11 @@ class Final4Bot:
         """Запустить бота"""
         logger.info("Запуск Final 4 Telegram бота...")
         
+        # Инициализируем БД
+        from .storage import get_storage
+        storage = get_storage()
+        await storage.init_db()
+        
         # Запуск polling
         await self.dp.start_polling(
             self.bot,
@@ -60,6 +65,9 @@ class Final4Bot:
     async def stop(self) -> None:
         """Остановить бота"""
         logger.info("Остановка бота...")
+        from .storage import get_storage
+        storage = get_storage()
+        await storage.close()
         await self.bot.session.close()
 
 

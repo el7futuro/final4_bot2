@@ -452,6 +452,7 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
                     user_obj.rating += 25
                 else:
                     user_obj.rating = max(0, user_obj.rating - 15)
+                storage.update_user_stats(user_obj)
         
         await state.update_data(match_id=str(match.id))
         await state.set_state(None)

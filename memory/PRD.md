@@ -160,7 +160,7 @@ cd /app/final4 && python scripts/run_bot.py
 1. E2E тестирование полного цикла игры через Telegram (MT + ET + Penalties)
 
 ### P1 (Важно)
-2. ~~PostgreSQL миграции (Alembic)~~ ✅ ВЫПОЛНЕНО
+2. ~~PostgreSQL миграции (Alembic)~~ ✅ ВЫПОЛНЕНО (Hybrid: in-memory + PostgreSQL)
 3. ~~Рефакторинг game.py~~ ✅ ВЫПОЛНЕНО (1636 → 5 модулей)
 
 ### P2 (Можно позже)

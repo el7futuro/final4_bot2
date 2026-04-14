@@ -73,8 +73,8 @@ async def _render_game_screen(callback: CallbackQuery, state: FSMContext, show_s
     
     if turn:
         bets_count = len(turn.manager1_bets if is_user_m1 else turn.manager2_bets)
-        is_confirmed = turn.manager1_confirmed if is_user_m1 else turn.manager2_confirmed
-        both_ready = turn.manager1_confirmed and turn.manager2_confirmed
+        is_confirmed = turn.manager1_ready if is_user_m1 else turn.manager2_ready
+        both_ready = turn.manager1_ready and turn.manager2_ready
         
         turn_number = turn.turn_number
         required_bets = 2 if match.phase == MatchPhase.EXTRA_TIME else (1 if turn_number == 1 else 2)

@@ -369,7 +369,7 @@ async def cb_confirm_bets(callback: CallbackQuery, state: FSMContext):
     
     # Проверяем, нужно ли ботом сделать ставки (vs_bot)
     if match.match_type.value == "vs_bot":
-        if not match.current_turn.manager2_confirmed:
+        if not match.current_turn.manager2_ready:
             match = bot_make_bets(storage, match)
             storage.save_match(match)
         
@@ -381,7 +381,7 @@ async def cb_confirm_bets(callback: CallbackQuery, state: FSMContext):
     # PvP
     is_m1 = match.manager1_id == user.id
     
-    if match.current_turn.manager1_confirmed and match.current_turn.manager2_confirmed:
+    if match.current_turn.manager1_ready and match.current_turn.manager2_ready:
         # Оба подтвердили — manager1 бросает кубик
         if is_m1:
             await state.set_state(MatchStates.waiting_roll)

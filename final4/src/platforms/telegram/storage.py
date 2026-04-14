@@ -261,13 +261,23 @@ class HybridStorage:
         try:
             async with self._db.session() as session:
                 from src.infrastructure.db.models import UserModel
+                from sqlalchemy import select
+                # Проверяем что пользователя нет
+                result = await session.execute(
+                    select(UserModel).where(UserModel.telegram_id == user.telegram_id)
+                )
+                if result.scalar_one_or_none():
+                    user._db_synced = True
+                    return
                 model = UserModel(
                     id=user.id,
                     username=user.username,
                     telegram_id=user.telegram_id,
+                    plan="free",
                     rating=user.rating,
                     matches_played=user.matches_played,
                     matches_won=user.matches_won,
+                    is_banned=False,
                 )
                 session.add(model)
             user._db_synced = True

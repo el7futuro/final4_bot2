@@ -123,7 +123,7 @@ async def _handle_make_bet(callback: CallbackQuery, state: FSMContext, match, us
     
     await callback.message.edit_text(
         text,
-        reply_markup=Keyboards.player_select(available_players)
+        reply_markup=Keyboards.bet_player_select(available_players)
     )
 
 

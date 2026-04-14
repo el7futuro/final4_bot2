@@ -56,12 +56,37 @@ class HybridStorage:
                 await session.execute(text("SELECT 1"))
             self._db_enabled = True
             logger.info("[DB] PostgreSQL подключен")
+            # Создаём бот-юзера если нет
+            await self._ensure_bot_user()
             # Загружаем данные из БД
             await self._load_from_db()
         except Exception as e:
             logger.warning(f"[DB] PostgreSQL недоступен, работаем in-memory: {e}")
             self._db_enabled = False
     
+    async def _ensure_bot_user(self):
+        """Создать бот-юзера в БД если его нет"""
+        try:
+            from src.core.engine.game_engine import BOT_USER_ID
+            async with self._db.session() as session:
+                from src.infrastructure.db.models import UserModel
+                from sqlalchemy import select
+                result = await session.execute(
+                    select(UserModel).where(UserModel.id == BOT_USER_ID)
+                )
+                if not result.scalar_one_or_none():
+                    bot_user = UserModel(
+                        id=BOT_USER_ID, username="Bot", plan="free",
+                        rating=1000, matches_played=0, matches_won=0,
+                        matches_lost=0, matches_draw=0, tournaments_won=0,
+                        goals_scored=0, goals_conceded=0, win_streak=0,
+                        best_win_streak=0, matches_today=0, is_banned=False
+                    )
+                    session.add(bot_user)
+                    logger.info("[DB] Bot user created")
+        except Exception as e:
+            logger.error(f"[DB] Failed to ensure bot user: {e}")
+
     async def _load_from_db(self):
         """Загрузить пользователей и активные матчи из БД"""
         if not self._db_enabled:

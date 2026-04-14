@@ -161,7 +161,7 @@ cd /app/final4 && python scripts/run_bot.py
 
 ### P1 (Важно)
 2. PostgreSQL миграции (Alembic)
-3. Рефакторинг game.py (~1400 строк → splitting)
+3. ~~Рефакторинг game.py~~ ✅ ВЫПОЛНЕНО (1636 → 5 модулей)
 
 ### P2 (Можно позже)
 4. VK и Discord адаптеры

@@ -168,6 +168,11 @@ class Keyboards:
             callback_data="match_stats"
         ))
         
+        builder.row(InlineKeyboardButton(
+            text="📜 История",
+            callback_data="match_history"
+        ))
+        
         return builder.as_markup()
     
     @staticmethod
@@ -220,6 +225,11 @@ class Keyboards:
             callback_data="match_stats"
         ))
         
+        builder.row(InlineKeyboardButton(
+            text="📜 История",
+            callback_data="match_history"
+        ))
+        
         return builder.as_markup()
     
     @staticmethod
@@ -234,8 +244,22 @@ class Keyboards:
             text="📊 Статистика",
             callback_data="match_stats"
         ))
+        builder.row(InlineKeyboardButton(
+            text="📜 История",
+            callback_data="match_history"
+        ))
         return builder.as_markup()
     
+    @staticmethod
+    def back_to_game() -> InlineKeyboardMarkup:
+        """Кнопка возврата в игру"""
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(
+            text="« Назад к игре",
+            callback_data="back_to_game"
+        ))
+        return builder.as_markup()
+
     @staticmethod
     def roll_dice_button() -> InlineKeyboardMarkup:
         """Кнопка броска кубика (после показа ставок)"""

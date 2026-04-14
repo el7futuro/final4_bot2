@@ -250,8 +250,11 @@ class MatchRenderer:
                         stats_parts.append(f"{p.stats.passes}🎯")
                     if p.stats.goals > 0:
                         stats_parts.append(f"{p.stats.goals}⚽")
+                    # Показываем ВСЕХ игроков, даже с 0 действиями
                     if stats_parts:
                         lines.append(f"    {i}. {p.name}: {' '.join(stats_parts)}")
+                    else:
+                        lines.append(f"    {i}. {p.name}: —")
             
             # Статистика Extra Time (если есть)
             if et_players:
@@ -270,8 +273,11 @@ class MatchRenderer:
                         stats_parts.append(f"{p.stats.passes}🎯")
                     if p.stats.goals > 0:
                         stats_parts.append(f"{p.stats.goals}⚽")
+                    # Показываем ВСЕХ игроков, даже с 0 действиями
                     if stats_parts:
                         lines.append(f"    {i}. {p.name}: {' '.join(stats_parts)}")
+                    else:
+                        lines.append(f"    {i}. {p.name}: —")
         else:
             # Без матча — общая статистика
             lines.append(f"🛡 Отбития: {team.stats.total_saves}")
@@ -625,3 +631,155 @@ class MatchRenderer:
                 lines.append(card_text)
         
         return "\n".join(lines) if lines else ""
+
+
+    @staticmethod
+    def render_match_history(match: Match, viewer_id) -> str:
+        """Отрендерить полную историю ходов матча"""
+        lines = ["📜 <b>ИСТОРИЯ МАТЧА</b>\n"]
+        
+        is_viewer_m1 = viewer_id == match.manager1_id
+        
+        # Получаем команды
+        viewer_team = match.team1 if is_viewer_m1 else match.team2
+        opponent_team = match.team2 if is_viewer_m1 else match.team1
+        
+        if not viewer_team or not opponent_team:
+            return "История недоступна"
+        
+        # Собираем историю по ходам из ставок
+        turns_data = {}
+        
+        for bet in match.bets:
+            turn_num = bet.turn_number
+            if turn_num not in turns_data:
+                turns_data[turn_num] = {"viewer": [], "opponent": []}
+            
+            is_viewer_bet = bet.manager_id == viewer_id
+            key = "viewer" if is_viewer_bet else "opponent"
+            turns_data[turn_num][key].append(bet)
+        
+        # Получаем использованных игроков по порядку
+        viewer_used_mt = match.used_players_main_m1 if is_viewer_m1 else match.used_players_main_m2
+        opponent_used_mt = match.used_players_main_m1 if not is_viewer_m1 else match.used_players_main_m2
+        viewer_used_et = match.used_players_extra_m1 if is_viewer_m1 else match.used_players_extra_m2
+        opponent_used_et = match.used_players_extra_m1 if not is_viewer_m1 else match.used_players_extra_m2
+        
+        # Main Time
+        if viewer_used_mt:
+            lines.append("\n<b>⏱ ОСНОВНОЕ ВРЕМЯ</b>")
+            for turn_idx, player_id_str in enumerate(viewer_used_mt, 1):
+                turn_lines = [f"\n<b>Ход {turn_idx}</b>"]
+                
+                # Находим игрока
+                viewer_player = next((p for p in viewer_team.players if str(p.id) == player_id_str), None)
+                opp_player_id = opponent_used_mt[turn_idx - 1] if turn_idx - 1 < len(opponent_used_mt) else None
+                opp_player = next((p for p in opponent_team.players if str(p.id) == opp_player_id), None) if opp_player_id else None
+                
+                if viewer_player:
+                    turn_lines.append(f"  🔵 Вы: {viewer_player.name}")
+                    # Ставки
+                    if turn_idx in turns_data:
+                        for bet in turns_data[turn_idx]["viewer"]:
+                            bet_str = MatchRenderer._format_bet(bet)
+                            outcome = "✅" if bet.outcome == BetOutcome.WON else "❌"
+                            turn_lines.append(f"      {bet_str} {outcome}")
+                    # Итог
+                    stats = []
+                    if viewer_player.stats.saves > 0:
+                        stats.append(f"{viewer_player.stats.saves}🛡")
+                    if viewer_player.stats.passes > 0:
+                        stats.append(f"{viewer_player.stats.passes}🎯")
+                    if viewer_player.stats.goals > 0:
+                        stats.append(f"{viewer_player.stats.goals}⚽")
+                    if stats:
+                        turn_lines.append(f"      → {' '.join(stats)}")
+                    else:
+                        turn_lines.append(f"      → —")
+                
+                if opp_player:
+                    turn_lines.append(f"  🔴 Соперник: {opp_player.name}")
+                    # Ставки
+                    if turn_idx in turns_data:
+                        for bet in turns_data[turn_idx]["opponent"]:
+                            bet_str = MatchRenderer._format_bet(bet)
+                            outcome = "✅" if bet.outcome == BetOutcome.WON else "❌"
+                            turn_lines.append(f"      {bet_str} {outcome}")
+                    # Итог
+                    stats = []
+                    if opp_player.stats.saves > 0:
+                        stats.append(f"{opp_player.stats.saves}🛡")
+                    if opp_player.stats.passes > 0:
+                        stats.append(f"{opp_player.stats.passes}🎯")
+                    if opp_player.stats.goals > 0:
+                        stats.append(f"{opp_player.stats.goals}⚽")
+                    if stats:
+                        turn_lines.append(f"      → {' '.join(stats)}")
+                    else:
+                        turn_lines.append(f"      → —")
+                
+                # Карточки этого хода
+                for card in match.whistle_cards_drawn:
+                    if card.turn_applied == turn_idx:
+                        who = "🔵" if card.applied_by_manager_id == viewer_id else "🔴"
+                        turn_lines.append(f"  🃏 {who} {card.get_display_name()}")
+                
+                lines.extend(turn_lines)
+        
+        # Extra Time
+        if viewer_used_et:
+            lines.append("\n\n<b>⏱ ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ</b>")
+            for turn_idx, player_id_str in enumerate(viewer_used_et, 1):
+                et_turn_num = 11 + turn_idx  # ET ходы после 11 ходов MT
+                turn_lines = [f"\n<b>Ход ET-{turn_idx}</b>"]
+                
+                viewer_player = next((p for p in viewer_team.players if str(p.id) == player_id_str), None)
+                opp_player_id = opponent_used_et[turn_idx - 1] if turn_idx - 1 < len(opponent_used_et) else None
+                opp_player = next((p for p in opponent_team.players if str(p.id) == opp_player_id), None) if opp_player_id else None
+                
+                if viewer_player:
+                    turn_lines.append(f"  🔵 Вы: {viewer_player.name}")
+                    stats = []
+                    if viewer_player.stats.saves > 0:
+                        stats.append(f"{viewer_player.stats.saves}🛡")
+                    if viewer_player.stats.passes > 0:
+                        stats.append(f"{viewer_player.stats.passes}🎯")
+                    if viewer_player.stats.goals > 0:
+                        stats.append(f"{viewer_player.stats.goals}⚽")
+                    if stats:
+                        turn_lines.append(f"      → {' '.join(stats)}")
+                    else:
+                        turn_lines.append(f"      → —")
+                
+                if opp_player:
+                    turn_lines.append(f"  🔴 Соперник: {opp_player.name}")
+                    stats = []
+                    if opp_player.stats.saves > 0:
+                        stats.append(f"{opp_player.stats.saves}🛡")
+                    if opp_player.stats.passes > 0:
+                        stats.append(f"{opp_player.stats.passes}🎯")
+                    if opp_player.stats.goals > 0:
+                        stats.append(f"{opp_player.stats.goals}⚽")
+                    if stats:
+                        turn_lines.append(f"      → {' '.join(stats)}")
+                    else:
+                        turn_lines.append(f"      → —")
+                
+                lines.extend(turn_lines)
+        
+        return "\n".join(lines)
+    
+    @staticmethod
+    def _format_bet(bet: Bet) -> str:
+        """Форматировать ставку"""
+        from src.core.models.bet import BetType
+        
+        if bet.bet_type == BetType.EVEN_ODD:
+            choice = "Чёт" if bet.even_odd_choice and bet.even_odd_choice.value == "even" else "Нечёт"
+            return f"Чёт/Нечёт: {choice}"
+        elif bet.bet_type == BetType.HIGH_LOW:
+            choice = "Больше" if bet.high_low_choice and bet.high_low_choice.value == "high" else "Меньше"
+            return f"Б/М: {choice}"
+        elif bet.bet_type == BetType.EXACT_NUMBER:
+            return f"Точное: {bet.exact_number}"
+        return str(bet.bet_type.value)

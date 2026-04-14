@@ -156,6 +156,47 @@ async def cb_match_stats(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "match_history")
+async def cb_match_history(callback: CallbackQuery, state: FSMContext):
+    """Показать историю ходов матча"""
+    data = await state.get_data()
+    match_id = data.get("match_id")
+    
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    if not match_id:
+        match = storage.get_user_active_match(user.id)
+        if match:
+            await state.update_data(match_id=str(match.id))
+            match_id = str(match.id)
+    else:
+        match = storage.get_match(UUID(match_id))
+    
+    if not match:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    renderer = MatchRenderer()
+    history_text = renderer.render_match_history(match, user.id)
+    
+    await callback.message.edit_text(
+        history_text,
+        reply_markup=Keyboards.back_to_game()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_game")
+async def cb_back_to_game(callback: CallbackQuery, state: FSMContext):
+    """Вернуться к игре"""
+    await _render_game_screen(callback, state)
+    await callback.answer()
+
+
 # Обработчик для восстановления состояния (когда игрок получил уведомление через send_message)
 @router.callback_query(F.data == "make_bet")
 async def cb_make_bet_restore_state(callback: CallbackQuery, state: FSMContext):
@@ -647,8 +688,8 @@ async def _notify_opponent_turn_result(bot, match, roller_user_id: UUID, dice_va
         logger.error(f"[PVP] Failed to notify opponent turn result: {e}")
 
 
-async def _notify_penalty_owner(bot, match, penalty_owner_id: UUID, context_text: str):
-    """Уведомить владельца пенальти, что ему нужно бросить (PvP)"""
+async def _notify_penalty_owner_with_choice(bot, match, penalty_owner_id: UUID):
+    """Отправить владельцу пенальти выбор High/Low (PvP)"""
     import logging
     logger = logging.getLogger(__name__)
     
@@ -669,7 +710,7 @@ async def _notify_penalty_owner(bot, match, penalty_owner_id: UUID, context_text
             text=text,
             reply_markup=Keyboards.penalty_choice()
         )
-        logger.info(f"[PVP] Penalty notification sent to {owner.telegram_id}")
+        logger.info(f"[PVP] Penalty choice sent to {owner.telegram_id}")
     except Exception as e:
         logger.error(f"[PVP] Failed to notify penalty owner: {e}")
 
@@ -793,12 +834,16 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
             await callback.answer("⚽ У вас пенальти!")
             return
         else:
-            # Пенальти СОПЕРНИКА в PvP — текущий пользователь ждёт
-            text += "\n\n⚽ <b>ПЕНАЛЬТИ СОПЕРНИКА!</b>\n⏳ Ожидаем решение соперника..."
-            
-            # Уведомляем владельца пенальти
+            # Пенальти СОПЕРНИКА в PvP — показываем текущему результаты, а сопернику отправляем пенальти
             if match.match_type.value == "random":
-                await _notify_penalty_owner(callback.bot, match, penalty_owner, text)
+                # Отправляем владельцу пенальти его выбор
+                await _notify_penalty_owner_with_choice(callback.bot, match, penalty_owner)
+                
+                # Текущему пользователю показываем ожидание
+                text += "\n\n⚽ <b>ПЕНАЛЬТИ СОПЕРНИКА!</b>\n⏳ Ожидаем решение соперника..."
+                await callback.message.edit_text(text, reply_markup=None)
+                await callback.answer("⚽ Пенальти соперника!")
+                return
     
     await state.set_state(MatchStates.in_game)
     await callback.message.edit_text(
@@ -812,13 +857,24 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
         await _notify_opponent_turn_result(callback.bot, match, user.id, dice_value, won_bets)
 
 
-@router.callback_query(F.data.startswith("penalty_choice:"), MatchStates.penalty_kick)
+@router.callback_query(F.data.startswith("penalty_choice:"))
 async def cb_penalty_choice(callback: CallbackQuery, state: FSMContext):
     """Выбор High/Low для пенальти — показываем кнопку броска"""
     choice = callback.data.split(":")[1]  # "high" или "low"
     
-    # Сохраняем выбор в состояние
-    await state.update_data(penalty_choice=choice)
+    # Восстанавливаем состояние из активного матча
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    match = storage.get_user_active_match(user.id)
+    if not match:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    await state.update_data(match_id=str(match.id), penalty_choice=choice)
     await state.set_state(MatchStates.penalty_choice_made)
     
     choice_text = "⬆️ Больше (4-6)" if choice == "high" else "⬇️ Меньше (1-3)"
@@ -832,16 +888,12 @@ async def cb_penalty_choice(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "penalty_roll", MatchStates.penalty_choice_made)
+@router.callback_query(F.data == "penalty_roll")
 async def cb_penalty_roll(callback: CallbackQuery, state: FSMContext):
     """Бросок кубика для пенальти"""
     data = await state.get_data()
     match_id = data.get("match_id")
     choice = data.get("penalty_choice")
-    
-    if not choice:
-        await callback.answer("Ошибка: выбор не сохранён", show_alert=True)
-        return
     
     storage = get_storage()
     user = storage.get_or_create_user(
@@ -849,9 +901,21 @@ async def cb_penalty_roll(callback: CallbackQuery, state: FSMContext):
         username=callback.from_user.full_name or "Игрок"
     )
     
-    match = storage.get_match(UUID(match_id))
+    # Восстанавливаем матч если нет в состоянии
+    if not match_id:
+        match = storage.get_user_active_match(user.id)
+        if match:
+            match_id = str(match.id)
+            await state.update_data(match_id=match_id)
+    else:
+        match = storage.get_match(UUID(match_id))
+    
     if not match:
         await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    if not choice:
+        await callback.answer("Сначала выберите Больше или Меньше!", show_alert=True)
         return
     
     try:
@@ -888,6 +952,46 @@ async def cb_penalty_roll(callback: CallbackQuery, state: FSMContext):
         reply_markup=Keyboards.game_actions_after_roll()
     )
     await callback.answer("⚽ ГОЛ!" if success else "❌ Промах!")
+    
+    # В PvP — уведомляем соперника о результате пенальти
+    if match.match_type.value == "random":
+        await _notify_opponent_penalty_result(callback.bot, match, user.id, success, dice_value, choice)
+
+
+async def _notify_opponent_penalty_result(bot, match, penalty_user_id: UUID, success: bool, dice_value: int, choice: str):
+    """Уведомить соперника о результате пенальти"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    storage = get_storage()
+    
+    opponent_id = match.manager2_id if penalty_user_id == match.manager1_id else match.manager1_id
+    opponent = storage.get_user_by_id(opponent_id)
+    
+    if not opponent:
+        return
+    
+    renderer = MatchRenderer()
+    
+    dice_emoji = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+    choice_text = "Больше (4-6)" if choice == "high" else "Меньше (1-3)"
+    
+    if success:
+        result_text = f"⚽ <b>ПЕНАЛЬТИ СОПЕРНИКА</b>\n\nСоперник выбрал: {choice_text}\n🎲 Выпало: {dice_emoji[dice_value]} {dice_value}\n\n❌ Соперник забил гол!"
+    else:
+        result_text = f"⚽ <b>ПЕНАЛЬТИ СОПЕРНИКА</b>\n\nСоперник выбрал: {choice_text}\n🎲 Выпало: {dice_emoji[dice_value]} {dice_value}\n\n✅ Вы отбили!"
+    
+    status_text = renderer.render_match_status(match, opponent_id)
+    
+    try:
+        await bot.send_message(
+            chat_id=opponent.telegram_id,
+            text=status_text + "\n\n" + result_text,
+            reply_markup=Keyboards.game_actions_after_roll()
+        )
+        logger.info(f"[PVP] Penalty result sent to opponent {opponent.telegram_id}")
+    except Exception as e:
+        logger.error(f"[PVP] Failed to notify opponent penalty result: {e}")
 
 
 @router.callback_query(F.data == "end_turn")
@@ -977,6 +1081,10 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
             reply_markup=Keyboards.game_actions_simultaneous(0, 2, False, False)
         )
         await state.set_state(MatchStates.in_game)
+        
+        # В PvP — уведомляем соперника о переходе в Extra Time
+        if match.match_type.value == "random":
+            await _notify_opponent_extra_time(callback.bot, match, user.id)
     elif match.status == MatchStatus.PENALTIES:
         # Автоматические пенальти
         match = _auto_penalties(storage, match)
@@ -1051,6 +1159,32 @@ async def _notify_opponent_match_finished(bot, match, user_id: UUID, finish_type
         logger.info(f"[PVP] Match finished notification sent to {opponent.telegram_id}")
     except Exception as e:
         logger.error(f"[PVP] Failed to notify opponent match finished: {e}")
+
+
+async def _notify_opponent_extra_time(bot, match, user_id: UUID):
+    """Уведомить соперника о переходе в Extra Time (PvP)"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    storage = get_storage()
+    
+    opponent_id = match.manager2_id if user_id == match.manager1_id else match.manager1_id
+    opponent = storage.get_user_by_id(opponent_id)
+    
+    if not opponent:
+        return
+    
+    try:
+        await bot.send_message(
+            chat_id=opponent.telegram_id,
+            text="⏱ <b>ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ!</b>\n\n"
+                 "Счёт равный, начинаем дополнительные 5 ходов.\n"
+                 "⚠️ Каждый игрок ОБЯЗАН делать ставку на гол!",
+            reply_markup=Keyboards.game_actions_simultaneous(0, 2, False, False)
+        )
+        logger.info(f"[PVP] Extra time notification sent to {opponent.telegram_id}")
+    except Exception as e:
+        logger.error(f"[PVP] Failed to notify opponent extra time: {e}")
 
 
 async def _notify_opponent_new_turn(bot, match, user_id: UUID):

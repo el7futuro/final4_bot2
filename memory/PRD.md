@@ -106,7 +106,7 @@
 
 ## Тестирование
 
-**72 unit-тестов проходит**
+**82 unit-тестов проходит**
 
 ```bash
 cd /app/final4 && python -m pytest tests/unit/core/ -v
@@ -119,7 +119,8 @@ cd /app/final4 && python -m pytest tests/unit/core/ -v
 - `test_game_engine.py` — движок игры
 - `test_simultaneous_betting.py` — одновременные ставки
 - `test_match_history.py` — отслеживание статистики
-- `test_whistle_cards.py` — карточки Red/Yellow + колода (11 тестов)
+- `test_whistle_cards.py` — карточки Red/Yellow/VAR + колода (12 тестов)
+- `test_full_game_loop.py` — **НОВЫЙ**: E2E полный цикл MT+ET+Penalties (9 тестов)
 
 ---
 

@@ -309,7 +309,7 @@ class TestPenalties:
     
     def test_penalties_after_et_draw(self):
         """Серия пенальти после ничьей в ET"""
-        from src.platforms.telegram.handlers.bot_logic import auto_penalties
+        from src.platforms.telegram.handlers.game import _auto_penalties
         from src.platforms.telegram.storage import HybridStorage
         
         random.seed(777)
@@ -337,7 +337,7 @@ class TestPenalties:
                 match = play_turn(engine, match, m1, m2, turn, "et")
         
         if match.status == MatchStatus.PENALTIES:
-            match = auto_penalties(storage, match)
+            match = _auto_penalties(storage, match)
             
             assert match.status == MatchStatus.FINISHED
             assert match.result is not None

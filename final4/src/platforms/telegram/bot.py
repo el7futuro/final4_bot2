@@ -38,13 +38,9 @@ class Final4Bot:
         from .handlers.start import router as start_router
         from .handlers.match import router as match_router
         from .handlers.game import router as game_router
-        from .handlers.betting import router as betting_router
-        from .handlers.cards import router as cards_router
         
         self.dp.include_router(start_router)
         self.dp.include_router(match_router)
-        self.dp.include_router(betting_router)
-        self.dp.include_router(cards_router)
         self.dp.include_router(game_router)
     
     async def start(self) -> None:

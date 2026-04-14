@@ -606,21 +606,33 @@ class MatchRenderer:
         if not viewer_team or not opponent_team:
             return "История недоступна"
         
-        # Собираем историю по ходам из ставок
-        turns_data = {}
+        # Собираем историю по ходам из ставок — РАЗДЕЛЬНО для MT и ET
+        # (В ET turn_number перезапускается с 1, поэтому нужно разделять)
+        viewer_mt_pids = set(match.used_players_main_m1 if is_viewer_m1 else match.used_players_main_m2)
+        viewer_et_pids = set(match.used_players_extra_m1 if is_viewer_m1 else match.used_players_extra_m2)
+        opp_et_pids = set(match.used_players_extra_m1 if not is_viewer_m1 else match.used_players_extra_m2)
+        
+        turns_data_mt = {}  # Main Time: turn_number → data
+        turns_data_et = {}  # Extra Time: turn_number → data
         
         for bet in match.bets:
             turn_num = bet.turn_number
-            if turn_num not in turns_data:
-                turns_data[turn_num] = {"viewer": [], "opponent": [], "dice": None}
+            
+            # Определяем фазу по player_id
+            pid_str = str(bet.player_id)
+            is_et_bet = pid_str in viewer_et_pids or pid_str in opp_et_pids
+            
+            target_dict = turns_data_et if is_et_bet else turns_data_mt
+            
+            if turn_num not in target_dict:
+                target_dict[turn_num] = {"viewer": [], "opponent": [], "dice": None}
             
             is_viewer_bet = bet.manager_id == viewer_id
             key = "viewer" if is_viewer_bet else "opponent"
-            turns_data[turn_num][key].append(bet)
+            target_dict[turn_num][key].append(bet)
             
-            # Сохраняем результат кубика из ставки (все ставки хода имеют один dice_result)
-            if bet.dice_result:
-                turns_data[turn_num]["dice"] = bet.dice_result
+            if bet.dice_roll:
+                target_dict[turn_num]["dice"] = bet.dice_roll
         
         # Получаем использованных игроков по порядку
         viewer_used_mt = match.used_players_main_m1 if is_viewer_m1 else match.used_players_main_m2
@@ -632,47 +644,45 @@ class MatchRenderer:
         if viewer_used_mt:
             lines.append("<b>⏱ ОСНОВНОЕ ВРЕМЯ</b>")
             for turn_idx, player_id_str in enumerate(viewer_used_mt, 1):
-                # Кубик
-                dice_val = turns_data.get(turn_idx, {}).get("dice", "?")
+                dice_val = turns_data_mt.get(turn_idx, {}).get("dice", "?")
                 turn_lines = [f"\n<b>Ход {turn_idx}</b> 🎲 {dice_val}"]
                 
-                # Находим игрока
                 viewer_player = next((p for p in viewer_team.players if str(p.id) == player_id_str), None)
                 opp_player_id = opponent_used_mt[turn_idx - 1] if turn_idx - 1 < len(opponent_used_mt) else None
                 opp_player = next((p for p in opponent_team.players if str(p.id) == opp_player_id), None) if opp_player_id else None
                 
                 if viewer_player:
                     turn_lines.append(f"  🔵 {viewer_player.name}")
-                    # Ставки
-                    if turn_idx in turns_data:
-                        for bet in turns_data[turn_idx]["viewer"]:
+                    if turn_idx in turns_data_mt:
+                        for bet in turns_data_mt[turn_idx]["viewer"]:
                             bet_str = MatchRenderer._format_bet(bet)
                             outcome = "✅" if bet.outcome == BetOutcome.WON else "❌"
                             turn_lines.append(f"      {bet_str} {outcome}")
-                    # Итог
                     stats = MatchRenderer._format_player_stats(viewer_player)
                     turn_lines.append(f"      → {stats}")
                 
                 if opp_player:
                     turn_lines.append(f"  🔴 {opp_player.name}")
-                    if turn_idx in turns_data:
-                        for bet in turns_data[turn_idx]["opponent"]:
+                    if turn_idx in turns_data_mt:
+                        for bet in turns_data_mt[turn_idx]["opponent"]:
                             bet_str = MatchRenderer._format_bet(bet)
                             outcome = "✅" if bet.outcome == BetOutcome.WON else "❌"
                             turn_lines.append(f"      {bet_str} {outcome}")
                     stats = MatchRenderer._format_player_stats(opp_player)
                     turn_lines.append(f"      → {stats}")
                 
-                # Карточки этого хода
+                # Карточки этого хода (MT ходы имеют turn_applied = 1..11)
                 for card in match.whistle_cards_drawn:
                     if card.turn_applied == turn_idx:
-                        who = "🔵" if card.applied_by_manager_id == viewer_id else "🔴"
-                        card_info = card.get_display_name()
-                        # Результат пенальти
-                        if card.card_type.value == "penalty" and card.penalty_scored is not None:
-                            pen_result = "⚽ГОЛ" if card.penalty_scored else "❌МИМО"
-                            card_info += f" ({pen_result})"
-                        turn_lines.append(f"  🃏 {who} {card_info}")
+                        # Проверяем что это карточка MT (а не ET)
+                        card_pid_str = str(card.applied_to_player_id) if card.applied_to_player_id else ""
+                        if card_pid_str not in viewer_et_pids and card_pid_str not in opp_et_pids:
+                            who = "🔵" if card.applied_by_manager_id == viewer_id else "🔴"
+                            card_info = card.get_display_name()
+                            if card.card_type.value == "penalty" and card.penalty_scored is not None:
+                                pen_result = "⚽ГОЛ" if card.penalty_scored else "❌МИМО"
+                                card_info += f" ({pen_result})"
+                            turn_lines.append(f"  🃏 {who} {card_info}")
                 
                 lines.extend(turn_lines)
         
@@ -680,8 +690,7 @@ class MatchRenderer:
         if viewer_used_et:
             lines.append("\n\n<b>⏱ ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ</b>")
             for turn_idx, player_id_str in enumerate(viewer_used_et, 1):
-                et_turn_num = 11 + turn_idx
-                dice_val = turns_data.get(et_turn_num, {}).get("dice", "?")
+                dice_val = turns_data_et.get(turn_idx, {}).get("dice", "?")
                 turn_lines = [f"\n<b>Ход ET-{turn_idx}</b> 🎲 {dice_val}"]
                 
                 viewer_player = next((p for p in viewer_team.players if str(p.id) == player_id_str), None)
@@ -690,25 +699,42 @@ class MatchRenderer:
                 
                 if viewer_player:
                     turn_lines.append(f"  🔵 {viewer_player.name}")
+                    if turn_idx in turns_data_et:
+                        for bet in turns_data_et[turn_idx]["viewer"]:
+                            bet_str = MatchRenderer._format_bet(bet)
+                            outcome = "✅" if bet.outcome == BetOutcome.WON else "❌"
+                            turn_lines.append(f"      {bet_str} {outcome}")
                     stats = MatchRenderer._format_player_stats(viewer_player)
                     turn_lines.append(f"      → {stats}")
                 
                 if opp_player:
                     turn_lines.append(f"  🔴 {opp_player.name}")
+                    if turn_idx in turns_data_et:
+                        for bet in turns_data_et[turn_idx]["opponent"]:
+                            bet_str = MatchRenderer._format_bet(bet)
+                            outcome = "✅" if bet.outcome == BetOutcome.WON else "❌"
+                            turn_lines.append(f"      {bet_str} {outcome}")
                     stats = MatchRenderer._format_player_stats(opp_player)
                     turn_lines.append(f"      → {stats}")
                 
-                # Карточки ET
+                # Карточки ET (turn_applied = 1..5 в ET)
                 for card in match.whistle_cards_drawn:
-                    if card.turn_applied == et_turn_num:
-                        who = "🔵" if card.applied_by_manager_id == viewer_id else "🔴"
-                        card_info = card.get_display_name()
-                        if card.card_type.value == "penalty" and card.penalty_scored is not None:
-                            pen_result = "⚽ГОЛ" if card.penalty_scored else "❌МИМО"
-                            card_info += f" ({pen_result})"
-                        turn_lines.append(f"  🃏 {who} {card_info}")
+                    if card.turn_applied == turn_idx:
+                        card_pid_str = str(card.applied_to_player_id) if card.applied_to_player_id else ""
+                        if card_pid_str in viewer_et_pids or card_pid_str in opp_et_pids:
+                            who = "🔵" if card.applied_by_manager_id == viewer_id else "🔴"
+                            card_info = card.get_display_name()
+                            if card.card_type.value == "penalty" and card.penalty_scored is not None:
+                                pen_result = "⚽ГОЛ" if card.penalty_scored else "❌МИМО"
+                                card_info += f" ({pen_result})"
+                            turn_lines.append(f"  🃏 {who} {card_info}")
                 
                 lines.extend(turn_lines)
+        
+        # Пенальти
+        if match.result and match.result.decided_by == MatchPhase.PENALTIES:
+            lines.append("\n\n<b>🎯 СЕРИЯ ПЕНАЛЬТИ</b>")
+            lines.append(f"Итог: {match.score.manager1_goals}:{match.score.manager2_goals}")
         
         return "\n".join(lines)
     

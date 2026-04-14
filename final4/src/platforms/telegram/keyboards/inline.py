@@ -19,6 +19,24 @@ class Keyboards:
     # ====== ГЛАВНОЕ МЕНЮ ======
     
     @staticmethod
+    def match_finished_menu(match_id: str = None) -> InlineKeyboardMarkup:
+        """Меню после завершения матча (с историей и статистикой)"""
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(
+            text="📜 История",
+            callback_data="match_history"
+        ))
+        builder.row(InlineKeyboardButton(
+            text="📊 Статистика",
+            callback_data="match_stats"
+        ))
+        builder.row(InlineKeyboardButton(
+            text="🏠 Главное меню",
+            callback_data="main_menu"
+        ))
+        return builder.as_markup()
+
+    @staticmethod
     def main_menu() -> InlineKeyboardMarkup:
         """Главное меню"""
         builder = InlineKeyboardBuilder()

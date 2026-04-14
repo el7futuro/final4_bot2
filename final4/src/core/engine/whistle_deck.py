@@ -19,7 +19,7 @@ class WhistleDeck:
     
     @staticmethod
     def create_deck() -> List[WhistleCard]:
-        """Создать и перемешать колоду (40 карточек)"""
+        """Создать и перемешать колоду (50 карточек)"""
         deck = []
         for card_type, count in CARD_DISTRIBUTION.items():
             for _ in range(count):

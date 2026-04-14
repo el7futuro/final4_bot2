@@ -68,7 +68,7 @@ class TestMatchCreation:
         assert match.manager1_id == manager1_id
         assert match.manager2_id is None
         assert match.status == MatchStatus.WAITING_FOR_OPPONENT
-        assert len(match.whistle_deck) == 40
+        assert len(match.whistle_deck) == 50
     
     def test_create_bot_match(self, engine, manager1_id):
         """Создание матча против бота"""

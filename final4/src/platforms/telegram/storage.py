@@ -113,6 +113,15 @@ class InMemoryStorage:
                     return match
         return None
     
+    def get_user_last_match(self, user_id: UUID) -> Optional[Match]:
+        """Получить последний матч пользователя (включая завершённые)"""
+        last_match = None
+        for match in self.matches.values():
+            if match.is_participant(user_id):
+                if last_match is None or (match.created_at and (last_match.created_at is None or match.created_at > last_match.created_at)):
+                    last_match = match
+        return last_match
+    
     def save_match(self, match: Match) -> None:
         """Сохранить матч"""
         self.matches[match.id] = match

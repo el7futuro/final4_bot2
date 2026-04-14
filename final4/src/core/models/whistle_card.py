@@ -24,7 +24,7 @@ class CardType(str, Enum):
     TACKLE = "tackle"             # Отбор: +1 отбитие
 
 
-# Количество карточек каждого типа в колоде (всего 40)
+# Количество карточек каждого типа в колоде (всего 50)
 CARD_DISTRIBUTION = {
     CardType.HAT_TRICK: 1,      # Хэт-трик: +3 гола
     CardType.DOUBLE: 1,         # Дубль: +2 гола

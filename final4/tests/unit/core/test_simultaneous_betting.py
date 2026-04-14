@@ -237,49 +237,76 @@ class TestAutoWhistleCard:
     """Тесты автоматического вытягивания карточки"""
     
     def test_card_drawn_automatically_on_win(self, match_in_progress, manager1_id, manager2_id):
-        """Карточка вытягивается автоматически при выигрыше"""
+        """Карточка вытягивается автоматически при выигрыше (полевые игроки)"""
         match = match_in_progress
         engine = GameEngine()
         
-        # Делаем ставки
+        # Ход 1 — вратари (карточки НЕ выпадают у вратарей)
         gk1 = match.team1.players[0]
         gk2 = match.team2.players[0]
         
-        # Менеджер 1 ставит на EVEN
         bet1 = Bet(
-            match_id=match.id,
-            manager_id=manager1_id,
-            player_id=gk1.id,
-            turn_number=1,
-            bet_type=BetType.EVEN_ODD,
-            even_odd_choice=EvenOddChoice.EVEN
+            match_id=match.id, manager_id=manager1_id, player_id=gk1.id,
+            turn_number=1, bet_type=BetType.EVEN_ODD, even_odd_choice=EvenOddChoice.EVEN
         )
         match, _ = engine.place_bet(match, manager1_id, gk1.id, bet1)
         engine.confirm_bets(match, manager1_id)
         
-        # Менеджер 2 ставит на ODD
         bet2 = Bet(
-            match_id=match.id,
-            manager_id=manager2_id,
-            player_id=gk2.id,
-            turn_number=1,
-            bet_type=BetType.EVEN_ODD,
-            even_odd_choice=EvenOddChoice.ODD
+            match_id=match.id, manager_id=manager2_id, player_id=gk2.id,
+            turn_number=1, bet_type=BetType.EVEN_ODD, even_odd_choice=EvenOddChoice.ODD
         )
         match, _ = engine.place_bet(match, manager2_id, gk2.id, bet2)
         engine.confirm_bets(match, manager2_id)
         
-        # Сохраняем количество карточек до броска
+        match, _, _ = engine.roll_dice(match)
+        # У вратарей карточки не выпадают
+        assert len(match.whistle_cards_drawn) == 0
+        
+        # Переходим к ходу 2 — полевые игроки
+        match = engine.end_turn(match)
+        
+        # Берём защитников (индекс 1 в players)
+        def1 = match.team1.players[1]
+        def2 = match.team2.players[1]
+        
+        # Менеджер 1: два разных типа ставок
+        b1 = Bet(
+            match_id=match.id, manager_id=manager1_id, player_id=def1.id,
+            turn_number=2, bet_type=BetType.EVEN_ODD, even_odd_choice=EvenOddChoice.EVEN
+        )
+        match, _ = engine.place_bet(match, manager1_id, def1.id, b1)
+        b1b = Bet(
+            match_id=match.id, manager_id=manager1_id, player_id=def1.id,
+            turn_number=2, bet_type=BetType.HIGH_LOW, high_low_choice=HighLowChoice.HIGH
+        )
+        match, _ = engine.place_bet(match, manager1_id, def1.id, b1b)
+        engine.confirm_bets(match, manager1_id)
+        
+        # Менеджер 2: два разных типа ставок
+        b2 = Bet(
+            match_id=match.id, manager_id=manager2_id, player_id=def2.id,
+            turn_number=2, bet_type=BetType.EVEN_ODD, even_odd_choice=EvenOddChoice.ODD
+        )
+        match, _ = engine.place_bet(match, manager2_id, def2.id, b2)
+        b2b = Bet(
+            match_id=match.id, manager_id=manager2_id, player_id=def2.id,
+            turn_number=2, bet_type=BetType.HIGH_LOW, high_low_choice=HighLowChoice.LOW
+        )
+        match, _ = engine.place_bet(match, manager2_id, def2.id, b2b)
+        engine.confirm_bets(match, manager2_id)
+        
         cards_before = len(match.whistle_cards_drawn)
         
-        # Бросаем кубик
         match, dice_value, won_bets = engine.roll_dice(match)
         
-        # Кто-то выиграл — у него должна быть карточка
         cards_after = len(match.whistle_cards_drawn)
         
-        # Ровно один выиграл — ровно одна карточка
-        assert cards_after == cards_before + 1
+        # Оба менеджера выиграли хотя бы одну ставку (одна из EVEN/ODD и одна из HIGH/LOW)
+        # Значит минимум 1 карточка, максимум 2
+        total_winners = sum(1 for v in won_bets.values() if v)
+        assert cards_after == cards_before + total_winners
+        assert total_winners >= 1  # Минимум один из двух всегда выигрывает
 
 
 class TestPlayerAvailability:

@@ -136,23 +136,70 @@ async def cb_back_to_game(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "match_stats")
 async def cb_match_stats(callback: CallbackQuery, state: FSMContext):
     """Показать статистику матча"""
-    # Проверяем, есть ли match_id в состоянии
     data = await state.get_data()
     match_id = data.get("match_id")
     
-    if not match_id:
-        # Пытаемся восстановить из активного матча
-        storage = get_storage()
-        user = storage.get_or_create_user(
-            telegram_id=callback.from_user.id,
-            username=callback.from_user.full_name or "Игрок"
-        )
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок"
+    )
+    
+    match = None
+    if match_id:
+        match = storage.get_match(UUID(match_id))
+    
+    if not match:
         match = storage.get_user_active_match(user.id)
+        if not match:
+            match = storage.get_user_last_match(user.id)
         if match:
             await state.update_data(match_id=str(match.id))
             await state.set_state(MatchStates.in_game)
     
-    await _render_game_screen(callback, state, show_stats=True)
+    if not match:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+    
+    # Рендерим статистику обеих команд
+    renderer = MatchRenderer()
+    
+    text_parts = []
+    
+    # Счёт матча
+    if match.status == MatchStatus.FINISHED and match.score:
+        text_parts.append(f"🏁 <b>Итоговый счёт: {match.score.manager1_goals}:{match.score.manager2_goals}</b>\n")
+    elif match.phase == MatchPhase.EXTRA_TIME:
+        score1, score2, details = MatchRenderer.calculate_extra_time_score(match)
+        text_parts.append(f"⏱ <b>Счёт ET: {score1}:{score2}</b>\n")
+    else:
+        score1, score2, details = MatchRenderer.calculate_current_score(match)
+        text_parts.append(f"📊 <b>Счёт: {score1}:{score2}</b>\n")
+    
+    if match.team1 and match.team2:
+        is_user_m1 = match.manager1_id == user.id
+        
+        text_parts.append(renderer.render_team_stats(
+            match.team1 if is_user_m1 else match.team2,
+            match=match,
+            is_opponent=False
+        ))
+        text_parts.append("")
+        text_parts.append(renderer.render_team_stats(
+            match.team2 if is_user_m1 else match.team1,
+            match=match,
+            is_opponent=True
+        ))
+    
+    text = "\n".join(text_parts)
+    
+    # Выбираем клавиатуру
+    if match.status == MatchStatus.FINISHED:
+        kb = Keyboards.match_finished_menu()
+    else:
+        kb = Keyboards.back_to_game()
+    
+    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
 
@@ -168,13 +215,16 @@ async def cb_match_history(callback: CallbackQuery, state: FSMContext):
         username=callback.from_user.full_name or "Игрок"
     )
     
-    if not match_id:
+    match = None
+    if match_id:
+        match = storage.get_match(UUID(match_id))
+    
+    if not match:
         match = storage.get_user_active_match(user.id)
+        if not match:
+            match = storage.get_user_last_match(user.id)
         if match:
             await state.update_data(match_id=str(match.id))
-            match_id = str(match.id)
-    else:
-        match = storage.get_match(UUID(match_id))
     
     if not match:
         await callback.answer("Матч не найден", show_alert=True)
@@ -183,17 +233,16 @@ async def cb_match_history(callback: CallbackQuery, state: FSMContext):
     renderer = MatchRenderer()
     history_text = renderer.render_match_history(match, user.id)
     
+    # Выбираем клавиатуру в зависимости от статуса матча
+    if match.status == MatchStatus.FINISHED:
+        kb = Keyboards.match_finished_menu()
+    else:
+        kb = Keyboards.back_to_game()
+    
     await callback.message.edit_text(
         history_text,
-        reply_markup=Keyboards.back_to_game()
+        reply_markup=kb
     )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "back_to_game")
-async def cb_back_to_game(callback: CallbackQuery, state: FSMContext):
-    """Вернуться к игре"""
-    await _render_game_screen(callback, state)
     await callback.answer()
 
 
@@ -1068,10 +1117,12 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
                 else:
                     user_obj.rating = max(0, user_obj.rating - 15)
         
-        await state.clear()
+        # Сохраняем match_id в состоянии для доступа к истории/статистике
+        await state.update_data(match_id=str(match.id))
+        await state.set_state(None)
         await callback.message.edit_text(
             result_text,
-            reply_markup=Keyboards.main_menu()
+            reply_markup=Keyboards.match_finished_menu()
         )
     elif match.status == MatchStatus.EXTRA_TIME:
         await callback.message.edit_text(
@@ -1093,10 +1144,11 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
         renderer = MatchRenderer()
         result_text = renderer.render_match_result(match, user.id)
         
-        await state.clear()
+        await state.update_data(match_id=str(match.id))
+        await state.set_state(None)
         await callback.message.edit_text(
             "⚽ <b>СЕРИЯ ПЕНАЛЬТИ!</b>\n\n" + result_text,
-            reply_markup=Keyboards.main_menu()
+            reply_markup=Keyboards.match_finished_menu()
         )
         
         # В PvP — уведомляем соперника о результате
@@ -1108,10 +1160,11 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
         renderer = MatchRenderer()
         result_text = renderer.render_match_result(match, user.id)
         
-        await state.clear()
+        await state.update_data(match_id=str(match.id))
+        await state.set_state(None)
         await callback.message.edit_text(
             result_text,
-            reply_markup=Keyboards.main_menu()
+            reply_markup=Keyboards.match_finished_menu()
         )
         
         # В PvP — уведомляем соперника о результате
@@ -1154,7 +1207,7 @@ async def _notify_opponent_match_finished(bot, match, user_id: UUID, finish_type
         await bot.send_message(
             chat_id=opponent.telegram_id,
             text=text,
-            reply_markup=Keyboards.main_menu()
+            reply_markup=Keyboards.match_finished_menu()
         )
         logger.info(f"[PVP] Match finished notification sent to {opponent.telegram_id}")
     except Exception as e:

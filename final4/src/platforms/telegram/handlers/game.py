@@ -168,7 +168,13 @@ async def cb_match_stats(callback: CallbackQuery, state: FSMContext):
     
     # Счёт матча
     if match.status == MatchStatus.FINISHED and match.score:
-        text_parts.append(f"🏁 <b>Итоговый счёт: {match.score.manager1_goals}:{match.score.manager2_goals}</b>\n")
+        text_parts.append(f"🏁 <b>Итоговый счёт: {match.score.manager1_goals}:{match.score.manager2_goals}</b>")
+        if match.result and match.result.decided_by == MatchPhase.PENALTIES and match.penalty_results:
+            is_user_m1 = match.manager1_id == user.id
+            vp = match.penalty_score_m1 if is_user_m1 else match.penalty_score_m2
+            op = match.penalty_score_m2 if is_user_m1 else match.penalty_score_m1
+            text_parts.append(f"🎯 Серия пенальти: <b>{vp}:{op}</b>")
+        text_parts.append("")
     elif match.phase == MatchPhase.EXTRA_TIME:
         score1, score2, details = MatchRenderer.calculate_extra_time_score(match)
         text_parts.append(f"⏱ <b>Счёт ET: {score1}:{score2}</b>\n")
@@ -1568,41 +1574,56 @@ def _bot_make_bets(storage, match):
 
 
 def _auto_penalties(storage, match):
-    """Автоматическая серия пенальти"""
+    """Автоматическая серия пенальти с сохранением результатов каждого удара"""
     engine = storage.engine
     history = engine.get_match_history(match)
     
     if not history:
-        # Без истории — жребий
         return engine.finish_by_lottery(match)
     
-    # Получаем игроков в порядке для пенальти
+    from src.core.models.match import PenaltyKick
+    
     players1 = history.get_all_players_ordered_for_penalties(match.manager1_id, match.manager1_id)
     players2 = history.get_all_players_ordered_for_penalties(match.manager2_id, match.manager1_id)
     
     goals1, goals2 = 0, 0
     max_kicks = min(5, len(players1), len(players2))
+    penalty_results = []
     
     for i in range(max_kicks):
-        # Игрок 1
-        if players1[i].passes > 0:
+        # Удар команды 1
+        p1 = players1[i]
+        scored1 = p1.passes > 0
+        if scored1:
             goals1 += 1
+        penalty_results.append(PenaltyKick(
+            manager_id=match.manager1_id,
+            player_name=p1.player_name,
+            scored=scored1
+        ))
         
-        # Игрок 2
-        if players2[i].passes > 0:
+        # Удар команды 2
+        p2 = players2[i]
+        scored2 = p2.passes > 0
+        if scored2:
             goals2 += 1
+        penalty_results.append(PenaltyKick(
+            manager_id=match.manager2_id,
+            player_name=p2.player_name,
+            scored=scored2
+        ))
     
-    # Обновляем счёт
+    match.penalty_results = penalty_results
+    match.penalty_score_m1 = goals1
+    match.penalty_score_m2 = goals2
     match.score.manager1_goals += goals1
     match.score.manager2_goals += goals2
     
-    # Определяем победителя
     if goals1 > goals2:
         winner_id = match.manager1_id
     elif goals2 > goals1:
         winner_id = match.manager2_id
     else:
-        # Жребий
         winner_id = random.choice([match.manager1_id, match.manager2_id])
     
     match = engine.finish_penalty_shootout(match, winner_id)

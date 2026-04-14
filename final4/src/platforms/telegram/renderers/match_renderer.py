@@ -376,6 +376,13 @@ class MatchRenderer:
         if match.result.decided_by_lottery:
             lines.append("(жребий)")
         
+        # Счёт серии пенальти
+        if match.result.decided_by == MatchPhase.PENALTIES and match.penalty_results:
+            is_viewer_m1 = viewer_id == match.manager1_id
+            viewer_pen = match.penalty_score_m1 if is_viewer_m1 else match.penalty_score_m2
+            opp_pen = match.penalty_score_m2 if is_viewer_m1 else match.penalty_score_m1
+            lines.append(f"🎯 Серия пенальти: <b>{viewer_pen}:{opp_pen}</b>")
+        
         # Статистика карточек Свисток
         lines.append("")
         lines.append("🃏 <b>Карточки Свисток:</b>")
@@ -734,7 +741,24 @@ class MatchRenderer:
         # Пенальти
         if match.result and match.result.decided_by == MatchPhase.PENALTIES:
             lines.append("\n\n<b>🎯 СЕРИЯ ПЕНАЛЬТИ</b>")
-            lines.append(f"Итог: {match.score.manager1_goals}:{match.score.manager2_goals}")
+            lines.append(f"Счёт пенальти: <b>{match.penalty_score_m1}:{match.penalty_score_m2}</b>\n")
+            
+            if match.penalty_results:
+                kick_num = 0
+                for kick in match.penalty_results:
+                    is_viewer = kick.manager_id == viewer_id
+                    who = "🔵" if is_viewer else "🔴"
+                    result = "⚽ ГОЛ" if kick.scored else "❌ МИМО"
+                    reason = "(есть передача)" if kick.scored else "(нет передачи)"
+                    
+                    # Нумерация по парам
+                    if is_viewer or kick_num % 2 == 0:
+                        pass
+                    kick_num += 1
+                    
+                    lines.append(f"  {who} {kick.player_name}: {result} {reason}")
+            else:
+                lines.append("  (Данные ударов недоступны)")
         
         return "\n".join(lines)
     

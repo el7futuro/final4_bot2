@@ -105,6 +105,13 @@ class MatchScore(BaseModel):
     manager2_goals: int = Field(default=0, ge=0)
 
 
+class PenaltyKick(BaseModel):
+    """Результат одного удара пенальти"""
+    manager_id: UUID
+    player_name: str
+    scored: bool  # Забил или промазал
+
+
 class MatchResult(BaseModel):
     """Результат матча"""
     winner_id: Optional[UUID] = None
@@ -147,6 +154,9 @@ class Match(BaseModel):
     # Результат
     score: MatchScore = Field(default_factory=MatchScore)
     result: Optional[MatchResult] = None
+    penalty_results: List[PenaltyKick] = Field(default_factory=list)  # Серия пенальти
+    penalty_score_m1: int = Field(default=0)  # Голы M1 в серии пенальти
+    penalty_score_m2: int = Field(default=0)  # Голы M2 в серии пенальти
     
     # Метаданные
     created_at: datetime = Field(default_factory=datetime.utcnow)

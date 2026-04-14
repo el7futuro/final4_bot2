@@ -167,20 +167,26 @@ async def cb_match_stats(callback: CallbackQuery, state: FSMContext):
     text_parts = []
     
     # Счёт матча
+    is_user_m1 = match.manager1_id == user.id
     if match.status == MatchStatus.FINISHED and match.score:
-        text_parts.append(f"🏁 <b>Итоговый счёт: {match.score.manager1_goals}:{match.score.manager2_goals}</b>")
+        vg = match.score.manager1_goals if is_user_m1 else match.score.manager2_goals
+        og = match.score.manager2_goals if is_user_m1 else match.score.manager1_goals
+        text_parts.append(f"🏁 <b>Итоговый счёт: {vg}:{og}</b>")
         if match.result and match.result.decided_by == MatchPhase.PENALTIES and match.penalty_results:
-            is_user_m1 = match.manager1_id == user.id
             vp = match.penalty_score_m1 if is_user_m1 else match.penalty_score_m2
             op = match.penalty_score_m2 if is_user_m1 else match.penalty_score_m1
             text_parts.append(f"🎯 Серия пенальти: <b>{vp}:{op}</b>")
         text_parts.append("")
     elif match.phase == MatchPhase.EXTRA_TIME:
-        score1, score2, details = MatchRenderer.calculate_extra_time_score(match)
-        text_parts.append(f"⏱ <b>Счёт ET: {score1}:{score2}</b>\n")
+        s1, s2, details = MatchRenderer.calculate_extra_time_score(match)
+        vs = s1 if is_user_m1 else s2
+        os_ = s2 if is_user_m1 else s1
+        text_parts.append(f"⏱ <b>Счёт ET: {vs}:{os_}</b>\n")
     else:
-        score1, score2, details = MatchRenderer.calculate_current_score(match)
-        text_parts.append(f"📊 <b>Счёт: {score1}:{score2}</b>\n")
+        s1, s2, details = MatchRenderer.calculate_current_score(match)
+        vs = s1 if is_user_m1 else s2
+        os_ = s2 if is_user_m1 else s1
+        text_parts.append(f"📊 <b>Счёт: {vs}:{os_}</b>\n")
     
     if match.team1 and match.team2:
         is_user_m1 = match.manager1_id == user.id

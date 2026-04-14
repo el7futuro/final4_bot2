@@ -42,16 +42,20 @@ class MatchRenderer:
         lines = [f"{emoji} <b>{text}</b>"]
         
         if match.status in [MatchStatus.IN_PROGRESS, MatchStatus.EXTRA_TIME]:
+            is_viewer_m1 = viewer_id == match.manager1_id
             # Рассчитываем текущий счёт
             if match.phase == MatchPhase.EXTRA_TIME:
-                # В Extra Time показываем ТОЛЬКО счёт ET
-                score1, score2, details = MatchRenderer.calculate_extra_time_score(match)
-                lines.append(f"\n⏱ <b>Счёт ET: {score1}:{score2}</b>")
+                s1, s2, details = MatchRenderer.calculate_extra_time_score(match)
+                vs = s1 if is_viewer_m1 else s2
+                os_ = s2 if is_viewer_m1 else s1
+                lines.append(f"\n⏱ <b>Счёт ET: {vs}:{os_}</b>")
                 lines.append(f"<i>{details}</i>")
                 lines.append(f"<i>(Только статистика дополнительного времени!)</i>")
             else:
-                score1, score2, details = MatchRenderer.calculate_current_score(match)
-                lines.append(f"\n📊 <b>Счёт: {score1}:{score2}</b>")
+                s1, s2, details = MatchRenderer.calculate_current_score(match)
+                vs = s1 if is_viewer_m1 else s2
+                os_ = s2 if is_viewer_m1 else s1
+                lines.append(f"\n📊 <b>Счёт: {vs}:{os_}</b>")
                 lines.append(f"<i>{details}</i>")
         
         return "\n".join(lines)
@@ -353,11 +357,14 @@ class MatchRenderer:
             return "Результат не определён"
         
         is_winner = match.result.winner_id == viewer_id
+        is_viewer_m1 = viewer_id == match.manager1_id
+        viewer_goals = match.score.manager1_goals if is_viewer_m1 else match.score.manager2_goals
+        opp_goals = match.score.manager2_goals if is_viewer_m1 else match.score.manager1_goals
         
         lines = [
             "🏁 <b>Матч завершён!</b>",
             "",
-            f"📊 Счёт: <b>{match.score.manager1_goals}:{match.score.manager2_goals}</b>",
+            f"📊 Счёт: <b>{viewer_goals}:{opp_goals}</b>",
             "",
         ]
         
@@ -741,7 +748,10 @@ class MatchRenderer:
         # Пенальти
         if match.result and match.result.decided_by == MatchPhase.PENALTIES:
             lines.append("\n\n<b>🎯 СЕРИЯ ПЕНАЛЬТИ</b>")
-            lines.append(f"Счёт пенальти: <b>{match.penalty_score_m1}:{match.penalty_score_m2}</b>\n")
+            is_viewer_m1_pen = viewer_id == match.manager1_id
+            vp = match.penalty_score_m1 if is_viewer_m1_pen else match.penalty_score_m2
+            op = match.penalty_score_m2 if is_viewer_m1_pen else match.penalty_score_m1
+            lines.append(f"Счёт пенальти: <b>{vp}:{op}</b>\n")
             
             if match.penalty_results:
                 kick_num = 0

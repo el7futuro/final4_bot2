@@ -99,6 +99,12 @@ class MatchModel(Base):
     total_turns_main = Column(Integer, nullable=False, default=0)
     total_turns_extra = Column(Integer, nullable=False, default=0)
     
+    # Использованные игроки (JSONB массивы строковых UUID)
+    used_players_main_m1 = Column(JSONB, nullable=False, default=list)
+    used_players_main_m2 = Column(JSONB, nullable=False, default=list)
+    used_players_extra_m1 = Column(JSONB, nullable=False, default=list)
+    used_players_extra_m2 = Column(JSONB, nullable=False, default=list)
+    
     # Карточки
     whistle_deck = Column(JSONB, nullable=False, default=list)
     whistle_cards_drawn = Column(JSONB, nullable=False, default=list)
@@ -115,6 +121,11 @@ class MatchModel(Base):
     loser_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=True)
     decided_by = Column(Text, nullable=True)
     decided_by_lottery = Column(Boolean, nullable=False, default=False)
+    
+    # Серия пенальти
+    penalty_results = Column(JSONB, nullable=False, default=list)
+    penalty_score_m1 = Column(Integer, nullable=False, default=0)
+    penalty_score_m2 = Column(Integer, nullable=False, default=0)
     
     # Платформа
     platform = Column(Text, nullable=False, default='telegram')

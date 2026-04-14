@@ -55,6 +55,10 @@ class MatchRepository(IMatchRepository):
                 current_turn=match.current_turn.model_dump(mode='json') if match.current_turn else None,
                 total_turns_main=match.total_turns_main,
                 total_turns_extra=match.total_turns_extra,
+                used_players_main_m1=match.used_players_main_m1,
+                used_players_main_m2=match.used_players_main_m2,
+                used_players_extra_m1=match.used_players_extra_m1,
+                used_players_extra_m2=match.used_players_extra_m2,
                 whistle_deck=[c.model_dump(mode='json') for c in match.whistle_deck],
                 whistle_cards_drawn=[c.model_dump(mode='json') for c in match.whistle_cards_drawn],
                 bets=[b.model_dump(mode='json') for b in match.bets],
@@ -64,6 +68,9 @@ class MatchRepository(IMatchRepository):
                 loser_id=match.result.loser_id if match.result else None,
                 decided_by=match.result.decided_by.value if match.result else None,
                 decided_by_lottery=match.result.decided_by_lottery if match.result else False,
+                penalty_results=[p.model_dump(mode='json') for p in match.penalty_results],
+                penalty_score_m1=match.penalty_score_m1,
+                penalty_score_m2=match.penalty_score_m2,
                 started_at=match.started_at,
                 finished_at=match.finished_at
             )
@@ -168,29 +175,19 @@ class MatchRepository(IMatchRepository):
     
     def _to_domain(self, model: MatchModel) -> Match:
         """Преобразовать модель БД в доменную модель"""
-        # Парсим команды
-        team1 = None
-        team2 = None
-        if model.team1_snapshot:
-            team1 = self._parse_team(model.team1_snapshot)
-        if model.team2_snapshot:
-            team2 = self._parse_team(model.team2_snapshot)
+        team1 = self._parse_team(model.team1_snapshot) if model.team1_snapshot else None
+        team2 = self._parse_team(model.team2_snapshot) if model.team2_snapshot else None
         
-        # Парсим текущий ход
-        current_turn = None
-        if model.current_turn:
-            current_turn = TurnState(**model.current_turn)
+        current_turn = TurnState(**model.current_turn) if model.current_turn else None
         
-        # Парсим ставки
-        bets = []
-        for b_data in model.bets or []:
-            bets.append(Bet(**b_data))
-        
-        # Парсим карточки
+        bets = [Bet(**b_data) for b_data in model.bets or []]
         whistle_deck = [WhistleCard(**c) for c in model.whistle_deck or []]
         whistle_cards_drawn = [WhistleCard(**c) for c in model.whistle_cards_drawn or []]
         
-        # Результат
+        # Пенальти
+        from src.core.models.match import PenaltyKick
+        penalty_results = [PenaltyKick(**p) for p in model.penalty_results or []]
+        
         result = None
         if model.winner_id:
             result = MatchResult(
@@ -216,6 +213,10 @@ class MatchRepository(IMatchRepository):
             current_turn=current_turn,
             total_turns_main=model.total_turns_main,
             total_turns_extra=model.total_turns_extra,
+            used_players_main_m1=model.used_players_main_m1 or [],
+            used_players_main_m2=model.used_players_main_m2 or [],
+            used_players_extra_m1=model.used_players_extra_m1 or [],
+            used_players_extra_m2=model.used_players_extra_m2 or [],
             bets=bets,
             whistle_cards_drawn=whistle_cards_drawn,
             whistle_deck=whistle_deck,
@@ -224,6 +225,9 @@ class MatchRepository(IMatchRepository):
                 manager2_goals=model.score_manager2
             ),
             result=result,
+            penalty_results=penalty_results,
+            penalty_score_m1=model.penalty_score_m1,
+            penalty_score_m2=model.penalty_score_m2,
             created_at=model.created_at,
             started_at=model.started_at,
             finished_at=model.finished_at,
@@ -267,6 +271,10 @@ class MatchRepository(IMatchRepository):
             current_turn=match.current_turn.model_dump(mode='json') if match.current_turn else None,
             total_turns_main=match.total_turns_main,
             total_turns_extra=match.total_turns_extra,
+            used_players_main_m1=match.used_players_main_m1,
+            used_players_main_m2=match.used_players_main_m2,
+            used_players_extra_m1=match.used_players_extra_m1,
+            used_players_extra_m2=match.used_players_extra_m2,
             whistle_deck=[c.model_dump(mode='json') for c in match.whistle_deck],
             whistle_cards_drawn=[c.model_dump(mode='json') for c in match.whistle_cards_drawn],
             bets=[b.model_dump(mode='json') for b in match.bets],
@@ -276,6 +284,9 @@ class MatchRepository(IMatchRepository):
             loser_id=match.result.loser_id if match.result else None,
             decided_by=match.result.decided_by.value if match.result else None,
             decided_by_lottery=match.result.decided_by_lottery if match.result else False,
+            penalty_results=[p.model_dump(mode='json') for p in match.penalty_results],
+            penalty_score_m1=match.penalty_score_m1,
+            penalty_score_m2=match.penalty_score_m2,
             platform=match.platform,
             created_at=match.created_at,
             started_at=match.started_at,

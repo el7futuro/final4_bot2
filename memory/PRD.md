@@ -106,7 +106,7 @@
 
 ## Тестирование
 
-**82 unit-тестов проходит**
+**86 тестов проходит** (82 unit + 4 integration)
 
 ```bash
 cd /app/final4 && python -m pytest tests/unit/core/ -v
@@ -160,7 +160,7 @@ cd /app/final4 && python scripts/run_bot.py
 1. E2E тестирование полного цикла игры через Telegram (MT + ET + Penalties)
 
 ### P1 (Важно)
-2. PostgreSQL миграции (Alembic)
+2. ~~PostgreSQL миграции (Alembic)~~ ✅ ВЫПОЛНЕНО
 3. ~~Рефакторинг game.py~~ ✅ ВЫПОЛНЕНО (1636 → 5 модулей)
 
 ### P2 (Можно позже)

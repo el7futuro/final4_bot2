@@ -56,6 +56,13 @@ class Final4Bot:
         storage = get_storage()
         await storage.init_db()
         
+        # Устанавливаем команды бота (кнопка Меню в Telegram)
+        from aiogram.types import BotCommand
+        await self.bot.set_my_commands([
+            BotCommand(command="start", description="Главное меню"),
+            BotCommand(command="menu", description="Главное меню"),
+        ])
+        
         # Запуск polling
         await self.dp.start_polling(
             self.bot,

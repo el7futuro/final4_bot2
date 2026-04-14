@@ -69,7 +69,7 @@ CARD_TARGETS = {
     CardType.OWN_GOAL: CardTarget.OPPONENT_PLAYER,   # +1 гол игроку соперника
     CardType.OFFSIDE: CardTarget.OPPONENT_PLAYER,    # отменяет гол соперника
     CardType.VAR: CardTarget.OPPONENT_TEAM,          # отменяет карточку соперника
-    CardType.RED_CARD: CardTarget.OPPONENT_PLAYER,   # удаление игрока соперника
+    CardType.RED_CARD: CardTarget.SELF_PLAYER,   # удаление действий своего игрока
     CardType.YELLOW_CARD: CardTarget.OPPONENT_PLAYER, # -1 действие у соперника
     
     # Особые

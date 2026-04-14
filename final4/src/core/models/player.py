@@ -72,7 +72,6 @@ class Player(BaseModel):
         if self.stats_before_red_card:
             self.stats = self.stats_before_red_card
             self.stats_before_red_card = None
-        self.is_available = True
 
     def get_total_actions(self) -> int:
         """Общее количество действий"""

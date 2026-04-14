@@ -83,61 +83,24 @@ def setup_match(manager1_id, manager2_id):
 
 
 class TestRedCardTargeting:
-    """Тесты: Удаление (RED_CARD) применяется к СОПЕРНИКУ"""
+    """Тесты: Удаление обнуляет действия СВОЕГО игрока (не убирает из игры)"""
     
-    def test_red_card_clears_opponent_stats(self, setup_match, manager1_id, manager2_id):
-        """RED_CARD от менеджера 1 обнуляет действия игрока менеджера 2"""
+    def test_red_card_clears_own_player_stats(self, setup_match, manager1_id, manager2_id):
+        """RED_CARD от менеджера 1 обнуляет действия СВОЕГО игрока (менеджера 1)"""
         match, engine, defender1, defender2 = setup_match
         
-        # Проверяем начальное состояние
-        assert defender2.stats.saves == 2
-        assert defender2.stats.goals == 1
-        assert defender1.stats.passes == 1
-        assert defender1.stats.goals == 1
+        # defender1 (свой): passes=1, goals=1
+        # defender2 (соперник): saves=2, goals=1
         
-        # Создаём карточку удаление
         card = WhistleCard(card_type=CardType.RED_CARD)
         card.applied_by_manager_id = manager1_id
         card.turn_applied = 2
         
-        # target = игрок СОПЕРНИКА (defender2)
-        target_player_id = match.current_turn.manager2_player_id
-        assert target_player_id == defender2.id
-        
-        # Получаем эффект
-        effect = WhistleDeck.get_card_effect(card, match, manager1_id, target_player_id)
-        
-        assert effect.player_removed is True
-        assert effect.target_player_id == defender2.id
-        
-        # Применяем
-        history = engine.get_match_history(match)
-        WhistleDeck.apply_effect(match, effect, history)
-        
-        # defender2 должен быть обнулён
-        assert defender2.stats.saves == 0
-        assert defender2.stats.goals == 0
-        assert defender2.stats.passes == 0
-        assert defender2.is_available is False
-        
-        # defender1 (свой) НЕ должен быть затронут!
-        assert defender1.stats.passes == 1
-        assert defender1.stats.goals == 1
-        assert defender1.is_available is True
-    
-    def test_red_card_from_m2_clears_m1_player(self, setup_match, manager1_id, manager2_id):
-        """RED_CARD от менеджера 2 обнуляет действия игрока менеджера 1"""
-        match, engine, defender1, defender2 = setup_match
-        
-        card = WhistleCard(card_type=CardType.RED_CARD)
-        card.applied_by_manager_id = manager2_id
-        card.turn_applied = 2
-        
-        # target = игрок менеджера 1
+        # RED_CARD теперь SELF_PLAYER → target = свой игрок (defender1)
         target_player_id = match.current_turn.manager1_player_id
         assert target_player_id == defender1.id
         
-        effect = WhistleDeck.get_card_effect(card, match, manager2_id, target_player_id)
+        effect = WhistleDeck.get_card_effect(card, match, manager1_id, target_player_id)
         
         assert effect.player_removed is True
         assert effect.target_player_id == defender1.id
@@ -145,15 +108,44 @@ class TestRedCardTargeting:
         history = engine.get_match_history(match)
         WhistleDeck.apply_effect(match, effect, history)
         
-        # defender1 обнулён
-        assert defender1.stats.passes == 0
+        # defender1 (свой) обнулён но ДОСТУПЕН
+        assert defender1.stats.saves == 0
         assert defender1.stats.goals == 0
-        assert defender1.is_available is False
+        assert defender1.stats.passes == 0
+        assert defender1.is_available is True  # НЕ удалён из игры!
         
-        # defender2 НЕ затронут
+        # defender2 (соперник) НЕ затронут
         assert defender2.stats.saves == 2
         assert defender2.stats.goals == 1
+    
+    def test_red_card_from_m2_clears_own_m2_player(self, setup_match, manager1_id, manager2_id):
+        """RED_CARD от менеджера 2 обнуляет действия СВОЕГО игрока (менеджера 2)"""
+        match, engine, defender1, defender2 = setup_match
+        
+        card = WhistleCard(card_type=CardType.RED_CARD)
+        card.applied_by_manager_id = manager2_id
+        card.turn_applied = 2
+        
+        # target = свой игрок менеджера 2
+        target_player_id = match.current_turn.manager2_player_id
+        assert target_player_id == defender2.id
+        
+        effect = WhistleDeck.get_card_effect(card, match, manager2_id, target_player_id)
+        
+        assert effect.player_removed is True
+        assert effect.target_player_id == defender2.id
+        
+        history = engine.get_match_history(match)
+        WhistleDeck.apply_effect(match, effect, history)
+        
+        # defender2 обнулён но доступен
+        assert defender2.stats.saves == 0
+        assert defender2.stats.goals == 0
         assert defender2.is_available is True
+        
+        # defender1 НЕ затронут
+        assert defender1.stats.passes == 1
+        assert defender1.stats.goals == 1
 
 
 class TestYellowCardTargeting:
@@ -259,15 +251,15 @@ class TestAutoDrawTargeting:
     """Тесты: автоматическое вытягивание карточки с правильной целью"""
     
     def test_opponent_player_card_targets_opponent(self, setup_match, manager1_id, manager2_id):
-        """OPPONENT_PLAYER карточки нацеливаются на игрока соперника"""
+        """OPPONENT_PLAYER карточки (офсайд и т.д.) нацеливаются на игрока соперника"""
         match, engine, defender1, defender2 = setup_match
         
-        # Проверяем что get_valid_targets возвращает соперника
-        card = WhistleCard(card_type=CardType.RED_CARD)
+        card = WhistleCard(card_type=CardType.OFFSIDE)
         
         targets = WhistleDeck.get_valid_targets(card, match, manager1_id)
         
-        # Должен вернуть defender2 (игрок соперника)
+        # Должен вернуть defender2 (игрок соперника) если у него есть голы
+        # defender2 has goals=1
         assert len(targets) == 1
         assert targets[0].id == defender2.id
     
@@ -279,7 +271,18 @@ class TestAutoDrawTargeting:
         
         targets = WhistleDeck.get_valid_targets(card, match, manager1_id)
         
-        # Должен вернуть defender1 (свой игрок)
+        assert len(targets) == 1
+        assert targets[0].id == defender1.id
+    
+    def test_red_card_targets_own_player(self, setup_match, manager1_id, manager2_id):
+        """RED_CARD (удаление) нацеливается на СВОЕГО игрока"""
+        match, engine, defender1, defender2 = setup_match
+        
+        card = WhistleCard(card_type=CardType.RED_CARD)
+        
+        targets = WhistleDeck.get_valid_targets(card, match, manager1_id)
+        
+        # RED_CARD = SELF_PLAYER → свой игрок
         assert len(targets) == 1
         assert targets[0].id == defender1.id
 

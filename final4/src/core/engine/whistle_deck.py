@@ -10,7 +10,7 @@ from ..models.whistle_card import (
     CARD_DISTRIBUTION, CARD_TARGETS
 )
 from ..models.match import Match
-from ..models.player import Player
+from ..models.player import Player, PlayerStats
 from ..models.match_history import MatchHistory, PlayerMatchStats
 
 
@@ -109,7 +109,8 @@ class WhistleDeck:
                 effect.card_cancelled_id = opponent_cards[-1].id
         
         elif card.card_type == CardType.RED_CARD:
-            # Удаление: игрок СОПЕРНИКА теряет ВСЕ действия текущего хода
+            # Удаление: СВОЙ игрок теряет ВСЕ полезные действия этого хода
+            # Игрок остаётся доступным, обнуляются только действия
             effect.target_player_id = target_player_id
             effect.player_removed = True
         
@@ -219,11 +220,14 @@ class WhistleDeck:
                         if stats:
                             stats.remove_passes(effect.passes_removed, card_name)
                 
-                # Удаление игрока (красная карточка)
+                # Удаление (красная карточка) — обнуляем ВСЕ действия, но игрок остаётся
                 if effect.player_removed:
                     logger.info(f"[RED_CARD] Clearing stats of player {player.name} (id={player.id}), manager={player_manager_id}, stats_before={player.stats}")
-                    player.clear_stats()
-                    logger.info(f"[RED_CARD] Player {player.name} cleared. is_available={player.is_available}")
+                    # Сохраняем snapshot для VAR
+                    player.stats_before_red_card = player.stats.model_copy()
+                    player.stats = PlayerStats()
+                    # НЕ ставим is_available=False — игрок остаётся в игре
+                    logger.info(f"[RED_CARD] Player {player.name} stats cleared. is_available={player.is_available}")
                     if history and player_manager_id:
                         stats = history.get_player_stats(
                             player_manager_id, player.id, match.manager1_id
@@ -366,12 +370,8 @@ class WhistleDeck:
                     match.current_turn.yellow_card_id = None
         
         elif card.card_type == CardType.RED_CARD:
-            # Удаление — восстанавливаем игрока со всеми статами
+            # Удаление — восстанавливаем статы игрока
             player.restore_stats_after_var()
-            if history and player_manager_id:
-                stats = history.get_player_stats(player_manager_id, player.id, match.manager1_id)
-                if stats:
-                    stats.clear_all(card_name)
     
     @staticmethod
     def get_valid_targets(

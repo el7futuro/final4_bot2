@@ -1032,29 +1032,14 @@ class GameEngine:
         (3, 3, 4),  # 3-3-4
     ]
     
-    def _can_reach_valid_formation(
-        self,
-        match: Match,
-        manager_id: UUID,
-        candidate_position: Position
-    ) -> bool:
-        """
-        Проверить, можно ли ещё достичь допустимой формации при выборе игрока данной позиции.
-        Только для основного времени (ходы 2-11, т.е. 10 полевых).
-        """
-        if match.phase != MatchPhase.MAIN_TIME:
-            return True  # В ET нет ограничений формации
-        
-        # Считаем уже использованных полевых по позициям
+    def _get_used_positions(self, match: Match, manager_id: UUID):
+        """Посчитать использованных полевых по позициям"""
         used_ids = match.get_used_players(manager_id)
         team = match.get_team(manager_id)
         if not team:
-            return True
+            return 0, 0, 0, set()
         
-        used_df = 0
-        used_mf = 0
-        used_fw = 0
-        
+        used_df = used_mf = used_fw = 0
         for p in team.players:
             if p.id in used_ids and p.position != Position.GOALKEEPER:
                 if p.position == Position.DEFENDER:
@@ -1063,6 +1048,25 @@ class GameEngine:
                     used_mf += 1
                 elif p.position == Position.FORWARD:
                     used_fw += 1
+        return used_df, used_mf, used_fw, used_ids
+    
+    def _can_reach_valid_formation(
+        self,
+        match: Match,
+        manager_id: UUID,
+        candidate_position: Position
+    ) -> bool:
+        """
+        Проверить, можно ли ещё достичь допустимой формации при выборе игрока данной позиции.
+        Вызывается с хода 2. Для ET — всегда True.
+        """
+        if match.phase != MatchPhase.MAIN_TIME:
+            return True
+        
+        used_df, used_mf, used_fw, used_ids = self._get_used_positions(match, manager_id)
+        team = match.get_team(manager_id)
+        if not team:
+            return True
         
         # Добавляем кандидата
         if candidate_position == Position.DEFENDER:
@@ -1072,22 +1076,116 @@ class GameEngine:
         elif candidate_position == Position.FORWARD:
             used_fw += 1
         
-        # Считаем доступных (неиспользованных, кроме текущего кандидата)
+        # Доступные (неиспользованные, минус кандидат)
         avail_df = sum(1 for p in team.players if p.position == Position.DEFENDER and p.id not in used_ids and p.is_available) - (1 if candidate_position == Position.DEFENDER else 0)
         avail_mf = sum(1 for p in team.players if p.position == Position.MIDFIELDER and p.id not in used_ids and p.is_available) - (1 if candidate_position == Position.MIDFIELDER else 0)
         avail_fw = sum(1 for p in team.players if p.position == Position.FORWARD and p.id not in used_ids and p.is_available) - (1 if candidate_position == Position.FORWARD else 0)
         
-        # Проверяем: существует ли хоть одна допустимая формация
         for d, m, f in self.VALID_FORMATIONS:
             if used_df <= d and used_mf <= m and used_fw <= f:
                 need_df = d - used_df
                 need_mf = m - used_mf
                 need_fw = f - used_fw
-                if need_df >= 0 and need_mf >= 0 and need_fw >= 0:
-                    if need_df <= avail_df and need_mf <= avail_mf and need_fw <= avail_fw:
-                        return True
+                if need_df <= avail_df and need_mf <= avail_mf and need_fw <= avail_fw:
+                    return True
         
         return False
+    
+    def _will_have_players_for_future_turns(
+        self,
+        match: Match,
+        manager_id: UUID,
+        candidate_position: Position,
+        candidate_even_odd_used: bool = False
+    ) -> bool:
+        """
+        Симуляция: если выбрать игрока данной позиции сейчас,
+        будут ли доступные игроки на КАЖДОМ из оставшихся ходов (до 11)?
+        
+        Проверяет что для каждого будущего хода найдётся хотя бы 1 игрок
+        с >= 2 доступными типами ставок.
+        
+        Вызывается с 8-го хода.
+        """
+        if match.phase != MatchPhase.MAIN_TIME:
+            return True
+        
+        turn_number = match.current_turn.turn_number if match.current_turn else 1
+        if turn_number < 8:
+            return True
+        
+        team = match.get_team(manager_id)
+        if not team:
+            return True
+        
+        used_ids = set(match.get_used_players(manager_id))
+        
+        # Текущий лимит чёт/нечёт
+        even_odd_count = self.bet_tracker._count_even_odd_bets(match, manager_id)
+        
+        # Симулируем: кандидат будет использован на текущем ходу
+        # Находим кандидата
+        candidate_id = None
+        for p in team.players:
+            if p.id not in used_ids and p.position == candidate_position and p.is_available:
+                candidate_id = p.id
+                break
+        
+        if not candidate_id:
+            return False
+        
+        sim_used = used_ids | {candidate_id}
+        sim_even_odd = even_odd_count
+        # На текущем ходу кандидат может использовать чёт/нечёт
+        # В худшем случае — использует (если DF/MF)
+        if candidate_position in (Position.DEFENDER, Position.MIDFIELDER):
+            sim_even_odd += 1  # предполагаем худший случай
+        
+        # Проверяем каждый будущий ход
+        remaining_turns = 11 - turn_number  # сколько ходов после текущего
+        
+        for future_step in range(remaining_turns):
+            # Нужен хотя бы 1 игрок с 2+ типами
+            found = False
+            for p in team.players:
+                if p.id in sim_used or not p.is_available:
+                    continue
+                if p.position == Position.GOALKEEPER:
+                    continue
+                
+                # Считаем типы ставок для этого игрока
+                types_count = 0
+                # EXACT_NUMBER — всегда доступен для полевых
+                types_count += 1
+                # HIGH_LOW — всегда доступен
+                types_count += 1
+                # EVEN_ODD — доступен если не форвард и лимит не исчерпан
+                if p.position != Position.FORWARD and sim_even_odd < 6:
+                    types_count += 1
+                
+                if types_count >= 2:
+                    found = True
+                    break
+            
+            if not found:
+                return False
+            
+            # "Используем" одного для этого хода (любого найденного)
+            for p in team.players:
+                if p.id in sim_used or not p.is_available:
+                    continue
+                if p.position == Position.GOALKEEPER:
+                    continue
+                types_count = 2  # EXACT + HIGH_LOW минимум
+                if p.position != Position.FORWARD and sim_even_odd < 6:
+                    types_count = 3
+                if types_count >= 2:
+                    sim_used.add(p.id)
+                    if p.position in (Position.DEFENDER, Position.MIDFIELDER):
+                        sim_even_odd += 1  # худший случай
+                    break
+        
+        return True
     
     def get_available_players(
         self,
@@ -1122,9 +1220,12 @@ class GameEngine:
             if player.position != Position.GOALKEEPER:
                 available_types = self.bet_tracker.get_available_bet_types(match, manager_id, player)
                 if len(available_types) >= 2:
-                    # Проверяем допустимость формации с 8-го хода
-                    if turn_number >= 8 and match.phase == MatchPhase.MAIN_TIME:
-                        if not self._can_reach_valid_formation(match, manager_id, player.position):
+                    # Проверяем формацию с хода 2
+                    if not self._can_reach_valid_formation(match, manager_id, player.position):
+                        continue
+                    # С хода 8 — симуляция будущих ходов
+                    if turn_number >= 8:
+                        if not self._will_have_players_for_future_turns(match, manager_id, player.position):
                             continue
                     final_available.append(player)
         

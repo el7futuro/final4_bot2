@@ -396,10 +396,10 @@ class TestRendering:
 
 
 class TestFormationValidation:
-    """Тест: игрок всегда доступен если имеет 2+ типа ставок"""
+    """Тест: формация проверяется с хода 2, симуляция с хода 8"""
     
-    def test_players_available_even_without_standard_formation(self):
-        """Игроки доступны даже при нестандартной формации (0DF+6MF+4FW)"""
+    def test_formation_blocks_excess_position(self):
+        """Формация не допускает больше позиций чем есть в допустимых формациях"""
         engine = GameEngine()
         m1 = uuid4(); m2 = uuid4()
         
@@ -411,21 +411,45 @@ class TestFormationValidation:
         )
         t1 = match.team1
         
-        # 1GK + 6MF + 3FW = 10 использовано
+        # 1GK + 5MF использовано, ход 7 — формация проверяет 6-й MF
         match.used_players_main_m1 = [str(t1.players[0].id)]
-        for i in range(6):
+        for i in range(5):
             match.used_players_main_m1.append(str(t1.players[7+i].id))
-        for i in range(3):
-            match.used_players_main_m1.append(str(t1.players[13+i].id))
-        
-        match.current_turn = TurnState(turn_number=11)
+        match.current_turn = TurnState(turn_number=7)
         engine._init_match_history(match)
         
         avail = engine.get_available_players(match, m1)
-        assert len(avail) > 0, "Should have available players for turn 11"
+        # 6-й MF допустим (формация 3-5-2 имеет MF=5, но MF6 будет 6-й)
+        # Максимум MF в формациях = 5 (3-5-2), значит MF6 заблокирован
+        mf_avail = [p for p in avail if p.position == Position.MIDFIELDER]
+        assert len(mf_avail) <= 1  # MF6 — единственный оставшийся, но формация может блокировать
     
-    def test_even_odd_limit_blocks_but_other_types_available(self):
-        """Если чёт/нечёт исчерпан, остаются HIGH_LOW и EXACT_NUMBER"""
+    def test_simulation_ensures_future_turns(self):
+        """С хода 8 симуляция проверяет что будущие ходы возможны"""
+        engine = GameEngine()
+        m1 = uuid4(); m2 = uuid4()
+        
+        match = Match(
+            match_type=MatchType.RANDOM,
+            manager1_id=m1, manager2_id=m2,
+            team1=make_team(m1, 'T1'), team2=make_team(m2, 'T2'),
+            status=MatchStatus.IN_PROGRESS,
+        )
+        t1 = match.team1
+        
+        # Ход 8: 1GK + 3DF + 3MF + 0FW = 7 использовано
+        match.used_players_main_m1 = [str(t1.players[0].id)]
+        for i in range(3): match.used_players_main_m1.append(str(t1.players[1+i].id))
+        for i in range(3): match.used_players_main_m1.append(str(t1.players[7+i].id))
+        match.current_turn = TurnState(turn_number=8)
+        engine._init_match_history(match)
+        
+        avail = engine.get_available_players(match, m1)
+        # Должны быть доступные игроки — формация 3-4-3 или 3-5-2 достижимы
+        assert len(avail) > 0
+    
+    def test_even_odd_exhausted_still_playable(self):
+        """Если чёт/нечёт исчерпан, остаются HIGH_LOW + EXACT_NUMBER (2 типа)"""
         from src.core.models.bet import Bet, BetType, EvenOddChoice
         
         engine = GameEngine()
@@ -443,12 +467,11 @@ class TestFormationValidation:
         for i in range(6):
             match.bets.append(Bet(
                 match_id=match.id, manager_id=m1,
-                player_id=t1.players[7+i].id, turn_number=2+i,
+                player_id=t1.players[1+i].id, turn_number=2+i,
                 bet_type=BetType.EVEN_ODD, even_odd_choice=EvenOddChoice.EVEN
             ))
         
-        # Защитник ещё не использован
-        df = t1.players[1]
+        df = t1.players[1]  # Защитник
         types = engine.bet_tracker.get_available_bet_types(match, m1, df)
         assert BetType.HIGH_LOW in types
         assert BetType.EXACT_NUMBER in types

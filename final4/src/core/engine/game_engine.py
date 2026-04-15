@@ -1091,101 +1091,71 @@ class GameEngine:
         
         return False
     
-    def _will_have_players_for_future_turns(
+    def _player_has_enough_bet_types(
         self,
         match: Match,
         manager_id: UUID,
-        candidate_position: Position,
-        candidate_even_odd_used: bool = False
+        player: Player,
+        min_types: int = 2
+    ) -> bool:
+        """Проверить что у игрока >= min_types типов ставок (быстрая проверка без создания списка)"""
+        types = self.bet_tracker.get_available_bet_types(match, manager_id, player)
+        return len(types) >= min_types
+    
+    def _count_playable_players(
+        self,
+        match: Match,
+        manager_id: UUID,
+        exclude_ids: set = None
+    ) -> int:
+        """
+        Посчитать сколько неиспользованных игроков могут реально играть
+        (имеют >= 2 типов ставок). Без учёта формации.
+        """
+        team = match.get_team(manager_id)
+        if not team:
+            return 0
+        
+        used_ids = match.get_used_players(manager_id)
+        count = 0
+        for p in team.players:
+            if p.id in used_ids or not p.is_available:
+                continue
+            if p.position == Position.GOALKEEPER:
+                continue
+            if exclude_ids and p.id in exclude_ids:
+                continue
+            if self._player_has_enough_bet_types(match, manager_id, p):
+                count += 1
+        return count
+    
+    def _selecting_player_leaves_enough_for_future(
+        self,
+        match: Match,
+        manager_id: UUID,
+        candidate: Player
     ) -> bool:
         """
-        Симуляция: если выбрать игрока данной позиции сейчас,
-        будут ли доступные игроки на КАЖДОМ из оставшихся ходов (до 11)?
+        Если выбрать этого игрока сейчас, останется ли достаточно
+        играбельных игроков на все будущие ходы?
         
-        Проверяет что для каждого будущего хода найдётся хотя бы 1 игрок
-        с >= 2 доступными типами ставок.
-        
-        Вызывается с 8-го хода.
+        Логика: после выбора кандидата, оставшихся играбельных >= оставшихся ходов.
         """
         if match.phase != MatchPhase.MAIN_TIME:
             return True
         
         turn_number = match.current_turn.turn_number if match.current_turn else 1
-        if turn_number < 8:
-            return True
+        turns_remaining_after = 11 - turn_number  # ходов ПОСЛЕ текущего
         
-        team = match.get_team(manager_id)
-        if not team:
-            return True
+        if turns_remaining_after <= 0:
+            return True  # Последний ход — выбор не влияет на будущее
         
-        used_ids = set(match.get_used_players(manager_id))
+        # Считаем играбельных БЕЗ кандидата
+        playable_without_candidate = self._count_playable_players(
+            match, manager_id, exclude_ids={candidate.id}
+        )
         
-        # Текущий лимит чёт/нечёт
-        even_odd_count = self.bet_tracker._count_even_odd_bets(match, manager_id)
-        
-        # Симулируем: кандидат будет использован на текущем ходу
-        # Находим кандидата
-        candidate_id = None
-        for p in team.players:
-            if p.id not in used_ids and p.position == candidate_position and p.is_available:
-                candidate_id = p.id
-                break
-        
-        if not candidate_id:
-            return False
-        
-        sim_used = used_ids | {candidate_id}
-        sim_even_odd = even_odd_count
-        # На текущем ходу кандидат может использовать чёт/нечёт
-        # В худшем случае — использует (если DF/MF)
-        if candidate_position in (Position.DEFENDER, Position.MIDFIELDER):
-            sim_even_odd += 1  # предполагаем худший случай
-        
-        # Проверяем каждый будущий ход
-        remaining_turns = 11 - turn_number  # сколько ходов после текущего
-        
-        for future_step in range(remaining_turns):
-            # Нужен хотя бы 1 игрок с 2+ типами
-            found = False
-            for p in team.players:
-                if p.id in sim_used or not p.is_available:
-                    continue
-                if p.position == Position.GOALKEEPER:
-                    continue
-                
-                # Считаем типы ставок для этого игрока
-                types_count = 0
-                # EXACT_NUMBER — всегда доступен для полевых
-                types_count += 1
-                # HIGH_LOW — всегда доступен
-                types_count += 1
-                # EVEN_ODD — доступен если не форвард и лимит не исчерпан
-                if p.position != Position.FORWARD and sim_even_odd < 6:
-                    types_count += 1
-                
-                if types_count >= 2:
-                    found = True
-                    break
-            
-            if not found:
-                return False
-            
-            # "Используем" одного для этого хода (любого найденного)
-            for p in team.players:
-                if p.id in sim_used or not p.is_available:
-                    continue
-                if p.position == Position.GOALKEEPER:
-                    continue
-                types_count = 2  # EXACT + HIGH_LOW минимум
-                if p.position != Position.FORWARD and sim_even_odd < 6:
-                    types_count = 3
-                if types_count >= 2:
-                    sim_used.add(p.id)
-                    if p.position in (Position.DEFENDER, Position.MIDFIELDER):
-                        sim_even_odd += 1  # худший случай
-                    break
-        
-        return True
+        return playable_without_candidate >= turns_remaining_after
     
     def get_available_players(
         self,
@@ -1223,10 +1193,9 @@ class GameEngine:
                     # Проверяем формацию с хода 2
                     if not self._can_reach_valid_formation(match, manager_id, player.position):
                         continue
-                    # С хода 8 — симуляция будущих ходов
-                    if turn_number >= 8:
-                        if not self._will_have_players_for_future_turns(match, manager_id, player.position):
-                            continue
+                    # Проверяем что выбор этого игрока не оставит без игроков в будущем
+                    if not self._selecting_player_leaves_enough_for_future(match, manager_id, player):
+                        continue
                     final_available.append(player)
         
         return final_available

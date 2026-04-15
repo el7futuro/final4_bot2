@@ -1122,6 +1122,10 @@ class GameEngine:
             if player.position != Position.GOALKEEPER:
                 available_types = self.bet_tracker.get_available_bet_types(match, manager_id, player)
                 if len(available_types) >= 2:
+                    # Проверяем допустимость формации с 8-го хода
+                    if turn_number >= 8 and match.phase == MatchPhase.MAIN_TIME:
+                        if not self._can_reach_valid_formation(match, manager_id, player.position):
+                            continue
                     final_available.append(player)
         
         return final_available

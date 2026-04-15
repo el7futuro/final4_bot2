@@ -396,52 +396,60 @@ class TestRendering:
 
 
 class TestFormationValidation:
-    """Тест валидации формаций"""
+    """Тест: игрок всегда доступен если имеет 2+ типа ставок"""
     
-    def test_invalid_formation_blocked(self):
-        """5-1-4 и другие невалидные формации блокируются"""
+    def test_players_available_even_without_standard_formation(self):
+        """Игроки доступны даже при нестандартной формации (0DF+6MF+4FW)"""
         engine = GameEngine()
         m1 = uuid4(); m2 = uuid4()
         
-        match = engine.create_match(m1, MatchType.RANDOM)
-        match.manager2_id = m2; match.status = MatchStatus.SETTING_LINEUP
+        match = Match(
+            match_type=MatchType.RANDOM,
+            manager1_id=m1, manager2_id=m2,
+            team1=make_team(m1, 'T1'), team2=make_team(m2, 'T2'),
+            status=MatchStatus.IN_PROGRESS,
+        )
+        t1 = match.team1
         
-        t1 = make_team(m1, 'T1'); t2 = make_team(m2, 'T2')
-        match = engine.set_team_without_formation(match, m1, t1)
-        match = engine.set_team_without_formation(match, m2, t2)
-        
-        # Используем 5 DF + 3 FW (8 полевых + 1 GK = 9)
-        match.used_players_main_m1 = [str(t1.players[0].id)]  # GK
-        for i in range(5):
-            match.used_players_main_m1.append(str(t1.players[1+i].id))  # 5 DF
+        # 1GK + 6MF + 3FW = 10 использовано
+        match.used_players_main_m1 = [str(t1.players[0].id)]
+        for i in range(6):
+            match.used_players_main_m1.append(str(t1.players[7+i].id))
         for i in range(3):
-            match.used_players_main_m1.append(str(t1.players[12+i].id))  # 3 FW
+            match.used_players_main_m1.append(str(t1.players[13+i].id))
         
-        match.current_turn = TurnState(turn_number=10)
+        match.current_turn = TurnState(turn_number=11)
+        engine._init_match_history(match)
         
         avail = engine.get_available_players(match, m1)
-        
-        # FW не должен быть доступен (5DF+0MF+4FW = невалидная формация)
-        fw_available = [p for p in avail if p.position == Position.FORWARD]
-        assert len(fw_available) == 0, f"FW should be blocked, got {[p.name for p in fw_available]}"
-        
-        # MF должен быть доступен (5DF+1MF+3FW или 5DF+2MF+3FW)
-        mf_available = [p for p in avail if p.position == Position.MIDFIELDER]
-        assert len(mf_available) > 0, "MF should be available"
+        assert len(avail) > 0, "Should have available players for turn 11"
     
-    def test_all_valid_formations_reachable(self):
-        """Все 7 формаций достижимы"""
-        engine = GameEngine()
-        valid = [(4,4,2),(4,3,3),(3,5,2),(3,4,3),(5,3,2),(5,2,3),(3,3,4)]
+    def test_even_odd_limit_blocks_but_other_types_available(self):
+        """Если чёт/нечёт исчерпан, остаются HIGH_LOW и EXACT_NUMBER"""
+        from src.core.models.bet import Bet, BetType, EvenOddChoice
         
-        for df, mf, fw in valid:
-            m1 = uuid4(); m2 = uuid4()
-            match = engine.create_match(m1, MatchType.RANDOM)
-            match.manager2_id = m2; match.status = MatchStatus.SETTING_LINEUP
-            
-            t1 = make_team(m1, 'T1'); t2 = make_team(m2, 'T2')
-            match = engine.set_team_without_formation(match, m1, t1)
-            match = engine.set_team_without_formation(match, m2, t2)
-            
-            result = engine._can_reach_valid_formation(match, m1, Position.DEFENDER)
-            assert result, f"Formation {df}-{mf}-{fw}: should be reachable from start"
+        engine = GameEngine()
+        m1 = uuid4(); m2 = uuid4()
+        
+        match = Match(
+            match_type=MatchType.RANDOM,
+            manager1_id=m1, manager2_id=m2,
+            team1=make_team(m1, 'T1'), team2=make_team(m2, 'T2'),
+            status=MatchStatus.IN_PROGRESS,
+        )
+        t1 = match.team1
+        
+        # 6 чёт/нечёт ставок
+        for i in range(6):
+            match.bets.append(Bet(
+                match_id=match.id, manager_id=m1,
+                player_id=t1.players[7+i].id, turn_number=2+i,
+                bet_type=BetType.EVEN_ODD, even_odd_choice=EvenOddChoice.EVEN
+            ))
+        
+        # Защитник ещё не использован
+        df = t1.players[1]
+        types = engine.bet_tracker.get_available_bet_types(match, m1, df)
+        assert BetType.HIGH_LOW in types
+        assert BetType.EXACT_NUMBER in types
+        assert len(types) >= 2

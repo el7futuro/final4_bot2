@@ -1122,9 +1122,7 @@ class GameEngine:
             if player.position != Position.GOALKEEPER:
                 available_types = self.bet_tracker.get_available_bet_types(match, manager_id, player)
                 if len(available_types) >= 2:
-                    # Проверяем допустимость формации (только MT)
-                    if self._can_reach_valid_formation(match, manager_id, player.position):
-                        final_available.append(player)
+                    final_available.append(player)
         
         return final_available
     

@@ -1058,7 +1058,16 @@ class GameEngine:
     ) -> bool:
         """
         Проверить, можно ли ещё достичь допустимой формации при выборе игрока данной позиции.
-        Вызывается с хода 2. Для ET — всегда True.
+        
+        Учитывает:
+        1. Достаточно ли игроков каждой позиции
+        2. Хватит ли бюджета чёт/нечёт (макс 6 за матч включая ГК)
+        
+        Логика бюджета чёт/нечёт:
+        - DF без чёт/нечёт = макс 1 (лимит голов DF = 1, без ч/н нужен high_low + goal)
+        - MF без чёт/нечёт = макс 3 (лимит голов MF = 3)
+        - FW никогда не ставят чёт/нечёт
+        - Минимум ч/н от оставшихся = (оставшиеся_DF - могут_пропустить_DF) + (оставшиеся_MF - могут_пропустить_MF)
         """
         if match.phase != MatchPhase.MAIN_TIME:
             return True
@@ -1069,25 +1078,72 @@ class GameEngine:
             return True
         
         # Добавляем кандидата
-        if candidate_position == Position.DEFENDER:
-            used_df += 1
-        elif candidate_position == Position.MIDFIELDER:
-            used_mf += 1
-        elif candidate_position == Position.FORWARD:
-            used_fw += 1
+        cand_df = used_df + (1 if candidate_position == Position.DEFENDER else 0)
+        cand_mf = used_mf + (1 if candidate_position == Position.MIDFIELDER else 0)
+        cand_fw = used_fw + (1 if candidate_position == Position.FORWARD else 0)
         
         # Доступные (неиспользованные, минус кандидат)
         avail_df = sum(1 for p in team.players if p.position == Position.DEFENDER and p.id not in used_ids and p.is_available) - (1 if candidate_position == Position.DEFENDER else 0)
         avail_mf = sum(1 for p in team.players if p.position == Position.MIDFIELDER and p.id not in used_ids and p.is_available) - (1 if candidate_position == Position.MIDFIELDER else 0)
         avail_fw = sum(1 for p in team.players if p.position == Position.FORWARD and p.id not in used_ids and p.is_available) - (1 if candidate_position == Position.FORWARD else 0)
         
+        # Текущий расход чёт/нечёт и голов
+        even_odd_used = self.bet_tracker._count_even_odd_bets(match, manager_id)
+        even_odd_budget = 6 - even_odd_used  # сколько ещё можно
+        
+        # Голы уже использованные по позициям
+        df_goals_used = 0
+        mf_goals_used = 0
+        for bet in match.bets:
+            if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
+                bp = team.get_player_by_id(bet.player_id)
+                if bp:
+                    if bp.position == Position.DEFENDER:
+                        df_goals_used += 1
+                    elif bp.position == Position.MIDFIELDER:
+                        mf_goals_used += 1
+        
         for d, m, f in self.VALID_FORMATIONS:
-            if used_df <= d and used_mf <= m and used_fw <= f:
-                need_df = d - used_df
-                need_mf = m - used_mf
-                need_fw = f - used_fw
-                if need_df <= avail_df and need_mf <= avail_mf and need_fw <= avail_fw:
-                    return True
+            if cand_df > d or cand_mf > m or cand_fw > f:
+                continue
+            
+            need_df = d - cand_df
+            need_mf = m - cand_mf
+            need_fw = f - cand_fw
+            
+            if need_df > avail_df or need_mf > avail_mf or need_fw > avail_fw:
+                continue
+            
+            # Проверяем бюджет ч/н: кандидат МОЖЕТ не тратить ч/н (лучший случай)
+            remaining_df_total = d - used_df
+            remaining_mf_total = m - used_mf
+            
+            # Считаем: если кандидат НЕ использует ч/н (через гол)
+            cand_df_goal_add = 1 if candidate_position == Position.DEFENDER else 0
+            cand_mf_goal_add = 1 if candidate_position == Position.MIDFIELDER else 0
+            
+            adj_df_goals = df_goals_used + cand_df_goal_add
+            adj_mf_goals = mf_goals_used + cand_mf_goal_add
+            
+            df_can_skip = max(0, 1 - adj_df_goals)
+            df_must_even_odd = max(0, remaining_df_total - df_can_skip)
+            
+            mf_can_skip = max(0, 3 - adj_mf_goals)
+            mf_must_even_odd = max(0, remaining_mf_total - mf_can_skip)
+            
+            # Лучший случай: кандидат не тратит ч/н
+            min_even_odd_best = df_must_even_odd + mf_must_even_odd
+            if min_even_odd_best <= even_odd_budget:
+                return True
+            
+            # Также проверяем: кандидат ТРАТИТ ч/н (может это тоже ОК)
+            df_can_skip2 = max(0, 1 - df_goals_used)
+            df_must_eo2 = max(0, remaining_df_total - df_can_skip2)
+            mf_can_skip2 = max(0, 3 - mf_goals_used)
+            mf_must_eo2 = max(0, remaining_mf_total - mf_can_skip2)
+            min_even_odd_with_eo = df_must_eo2 + mf_must_eo2
+            if min_even_odd_with_eo <= even_odd_budget:
+                return True
         
         return False
     

@@ -235,6 +235,83 @@ class BetTracker:
         
         return limit - used
     
+    
+    def _even_odd_safe_for_future(
+        self,
+        match: Match,
+        manager_id: UUID,
+        player: Player
+    ) -> bool:
+        """
+        Проверить: если этот игрок поставит ч/н, останется ли возможность
+        достичь хоть одной допустимой формации?
+        
+        Логика: симулируем что бюджет ч/н уменьшится на 1,
+        и проверяем что хотя бы одна формация достижима.
+        """
+        if match.phase != MatchPhase.MAIN_TIME:
+            return True
+        
+        team = match.get_team(manager_id)
+        if not team:
+            return True
+        
+        VALID_FORMATIONS = [
+            (4, 4, 2), (4, 3, 3), (3, 5, 2), (3, 4, 3),
+            (5, 3, 2), (5, 2, 3), (3, 3, 4),
+        ]
+        
+        used_ids = match.get_used_players(manager_id)
+        
+        used_df = used_mf = used_fw = 0
+        for p in team.players:
+            if p.id in used_ids and p.position != Position.GOALKEEPER:
+                if p.position == Position.DEFENDER: used_df += 1
+                elif p.position == Position.MIDFIELDER: used_mf += 1
+                elif p.position == Position.FORWARD: used_fw += 1
+        
+        avail_df = sum(1 for p in team.players if p.position == Position.DEFENDER and p.id not in used_ids and p.is_available)
+        avail_mf = sum(1 for p in team.players if p.position == Position.MIDFIELDER and p.id not in used_ids and p.is_available)
+        avail_fw = sum(1 for p in team.players if p.position == Position.FORWARD and p.id not in used_ids and p.is_available)
+        
+        # Бюджет ч/н ПОСЛЕ этой ставки (тратим 1)
+        even_odd_after = self._count_even_odd_bets(match, manager_id) + 1
+        even_odd_budget = 6 - even_odd_after
+        
+        # Голы по позициям
+        df_goals_used = 0
+        mf_goals_used = 0
+        for bet in match.bets:
+            if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
+                bp = team.get_player_by_id(bet.player_id)
+                if bp:
+                    if bp.position == Position.DEFENDER: df_goals_used += 1
+                    elif bp.position == Position.MIDFIELDER: mf_goals_used += 1
+        
+        for d, m, f in VALID_FORMATIONS:
+            if used_df > d or used_mf > m or used_fw > f:
+                continue
+            
+            need_df = d - used_df
+            need_mf = m - used_mf
+            need_fw = f - used_fw
+            
+            if need_df > avail_df or need_mf > avail_mf or need_fw > avail_fw:
+                continue
+            
+            remaining_df_total = d - used_df
+            remaining_mf_total = m - used_mf
+            
+            df_can_skip = max(0, 1 - df_goals_used)
+            df_must_eo = max(0, remaining_df_total - df_can_skip)
+            
+            mf_can_skip = max(0, 3 - mf_goals_used)
+            mf_must_eo = max(0, remaining_mf_total - mf_can_skip)
+            
+            if df_must_eo + mf_must_eo <= even_odd_budget:
+                return True
+        
+        return False
     def get_available_bet_types(
         self,
         match: Match,
@@ -302,7 +379,9 @@ class BetTracker:
         if player.position != Position.FORWARD:
             even_odd_count = self._count_even_odd_bets(match, manager_id)
             if even_odd_count < 6 and existing_bet_type != BetType.EVEN_ODD:
-                available.append(BetType.EVEN_ODD)
+                # Дополнительная проверка: не сломает ли ч/н будущие формации
+                if self._even_odd_safe_for_future(match, manager_id, player):
+                    available.append(BetType.EVEN_ODD)
         
         # Больше/меньше — всегда доступно для полевых (нельзя две одинаковые)
         if existing_bet_type != BetType.HIGH_LOW:

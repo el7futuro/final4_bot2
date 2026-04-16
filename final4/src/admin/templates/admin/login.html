@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Final 4 Admin - Login</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #1a1a2e; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .login-card { background: #16213e; border-radius: 12px; padding: 40px; width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        .login-card h2 { color: #e94560; text-align: center; margin-bottom: 30px; }
+        .form-control { background: #0f3460; border: 1px solid #1a1a2e; color: #fff; }
+        .form-control:focus { background: #0f3460; border-color: #e94560; color: #fff; box-shadow: 0 0 0 0.2rem rgba(233,69,96,0.25); }
+        .btn-login { background: #e94560; border: none; width: 100%; padding: 10px; font-weight: bold; }
+        .btn-login:hover { background: #c73651; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h2>Final 4 Admin</h2>
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+        <form method="POST">
+            <div class="mb-3">
+                <input type="password" name="password" class="form-control" placeholder="Admin password" autofocus>
+            </div>
+            <button type="submit" class="btn btn-login text-white">Login</button>
+        </form>
+    </div>
+</body>
+</html>

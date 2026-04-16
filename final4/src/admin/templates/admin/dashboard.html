@@ -1,0 +1,79 @@
+{% extends 'admin/index.html' %}
+{% block body %}
+<div class="container-fluid" style="padding: 20px;">
+    <h2>Dashboard</h2>
+    <div class="row g-3 mt-2">
+        <div class="col-md-3">
+            <div class="card text-white bg-primary">
+                <div class="card-body text-center">
+                    <h5>Users</h5>
+                    <h2>{{ user_count }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-success">
+                <div class="card-body text-center">
+                    <h5>Matches</h5>
+                    <h2>{{ match_count }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-info">
+                <div class="card-body text-center">
+                    <h5>Active</h5>
+                    <h2>{{ active_matches }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-warning">
+                <div class="card-body text-center">
+                    <h5>Tournaments</h5>
+                    <h2>{{ tournament_count }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><strong>Top Players by Rating</strong></div>
+                <table class="table table-sm table-striped mb-0">
+                    <thead><tr><th>#</th><th>Player</th><th>Rating</th><th>W/L</th></tr></thead>
+                    <tbody>
+                    {% for u in top_players %}
+                        <tr>
+                            <td>{{ loop.index }}</td>
+                            <td>{{ u.username }}</td>
+                            <td><strong>{{ u.rating }}</strong></td>
+                            <td>{{ u.matches_won }}/{{ u.matches_played - u.matches_won }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><strong>Recent Matches</strong></div>
+                <table class="table table-sm table-striped mb-0">
+                    <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Score</th><th>Date</th></tr></thead>
+                    <tbody>
+                    {% for m in recent_matches %}
+                        <tr>
+                            <td>{{ m.id|string|truncate(8, True, '') }}</td>
+                            <td>{{ m.match_type }}</td>
+                            <td><span class="badge bg-{{ 'success' if m.status == 'finished' else 'warning' }}">{{ m.status }}</span></td>
+                            <td>{{ m.score_manager1 }}:{{ m.score_manager2 }}</td>
+                            <td>{{ m.created_at.strftime('%d.%m %H:%M') if m.created_at else '-' }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

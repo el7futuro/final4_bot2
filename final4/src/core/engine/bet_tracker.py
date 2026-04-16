@@ -312,6 +312,86 @@ class BetTracker:
                 return True
         
         return False
+    
+    def _goal_safe_for_future(
+        self,
+        match: Match,
+        manager_id: UUID,
+        player: Player
+    ) -> bool:
+        """
+        Проверить: если этот игрок поставит на гол, останется ли возможность
+        достичь хоть одной допустимой формации?
+        
+        Учитывает что если игрок DF/MF ставит на гол (пропуская ч/н),
+        это ОСВОБОЖДАЕТ 1 ч/н. А если он ставит гол + ч/н, тратит оба ресурса.
+        Проверяем ЛУЧШИЙ случай: гол без ч/н (экономия ч/н).
+        """
+        if match.phase != MatchPhase.MAIN_TIME:
+            return True
+        
+        team = match.get_team(manager_id)
+        if not team:
+            return True
+        
+        VALID_FORMATIONS = [
+            (4, 4, 2), (4, 3, 3), (3, 5, 2), (3, 4, 3),
+            (5, 3, 2), (5, 2, 3), (3, 3, 4),
+        ]
+        
+        used_ids = match.get_used_players(manager_id)
+        
+        used_df = used_mf = used_fw = 0
+        for p in team.players:
+            if p.id in used_ids and p.position != Position.GOALKEEPER:
+                if p.position == Position.DEFENDER: used_df += 1
+                elif p.position == Position.MIDFIELDER: used_mf += 1
+                elif p.position == Position.FORWARD: used_fw += 1
+        
+        avail_df = sum(1 for p in team.players if p.position == Position.DEFENDER and p.id not in used_ids and p.is_available)
+        avail_mf = sum(1 for p in team.players if p.position == Position.MIDFIELDER and p.id not in used_ids and p.is_available)
+        avail_fw = sum(1 for p in team.players if p.position == Position.FORWARD and p.id not in used_ids and p.is_available)
+        
+        even_odd_budget = 6 - self._count_even_odd_bets(match, manager_id)
+        
+        df_goals_used = 0
+        mf_goals_used = 0
+        for bet in match.bets:
+            if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
+                bp = team.get_player_by_id(bet.player_id)
+                if bp:
+                    if bp.position == Position.DEFENDER: df_goals_used += 1
+                    elif bp.position == Position.MIDFIELDER: mf_goals_used += 1
+        
+        # Симулируем: этот игрок тратит 1 гол-квоту
+        sim_df_goals = df_goals_used + (1 if player.position == Position.DEFENDER else 0)
+        sim_mf_goals = mf_goals_used + (1 if player.position == Position.MIDFIELDER else 0)
+        
+        # Лучший случай: этот игрок НЕ тратит ч/н (гол + big_small)
+        # ч/н budget НЕ меняется
+        for d, m, f in VALID_FORMATIONS:
+            if used_df > d or used_mf > m or used_fw > f:
+                continue
+            need_df = d - used_df
+            need_mf = m - used_mf
+            need_fw = f - used_fw
+            if need_df > avail_df or need_mf > avail_mf or need_fw > avail_fw:
+                continue
+            
+            remaining_df = d - used_df
+            remaining_mf = m - used_mf
+            
+            df_can_skip = max(0, 1 - sim_df_goals)
+            df_must_eo = max(0, remaining_df - df_can_skip)
+            
+            mf_can_skip = max(0, 3 - sim_mf_goals)
+            mf_must_eo = max(0, remaining_mf - mf_can_skip)
+            
+            if df_must_eo + mf_must_eo <= even_odd_budget:
+                return True
+        
+        return False
+
     def get_available_bet_types(
         self,
         match: Match,
@@ -379,8 +459,23 @@ class BetTracker:
         if player.position != Position.FORWARD:
             even_odd_count = self._count_even_odd_bets(match, manager_id)
             if even_odd_count < 6 and existing_bet_type != BetType.EVEN_ODD:
-                # Дополнительная проверка: не сломает ли ч/н будущие формации
-                if self._even_odd_safe_for_future(match, manager_id, player):
+                # Блокируем ч/н только если без него останется >= 2 типа
+                # (т.е. high_low + exact_number оба доступны)
+                team_check = match.get_team(manager_id)
+                has_goal_quota = False
+                if team_check:
+                    remaining_goal = self._get_remaining_goal_quota(match, manager_id, player, team_check)
+                    has_goal_quota = remaining_goal >= 1
+                
+                has_high_low = existing_bet_type != BetType.HIGH_LOW
+                
+                if has_goal_quota and has_high_low:
+                    # Без ч/н будет high_low + exact = 2 типа → можно проверять future
+                    if self._even_odd_safe_for_future(match, manager_id, player):
+                        available.append(BetType.EVEN_ODD)
+                    # Если unsafe — не добавляем ч/н, игрок обойдётся без него
+                else:
+                    # Без ч/н будет < 2 типа → ч/н ОБЯЗАТЕЛЕН
                     available.append(BetType.EVEN_ODD)
         
         # Больше/меньше — всегда доступно для полевых (нельзя две одинаковые)
@@ -392,14 +487,16 @@ class BetTracker:
         if team:
             remaining_quota = self._get_remaining_goal_quota(match, manager_id, player, team)
             
-            if existing_bet_type == BetType.EXACT_NUMBER:
-                # Первая ставка уже на гол — для второй нужна ещё 1 квота
-                if remaining_quota >= 1:
+            if remaining_quota >= 1 and existing_bet_type != BetType.EXACT_NUMBER:
+                # Проверяем: если потратить гол-квоту, не сломает ли будущие формации?
+                if self._goal_safe_for_future(match, manager_id, player):
                     available.append(BetType.EXACT_NUMBER)
-            else:
-                # Первая ставка не на гол — проверяем есть ли хоть 1 квота
-                if remaining_quota >= 1:
-                    available.append(BetType.EXACT_NUMBER)
+                else:
+                    # Гол небезопасен, но если без гола у игрока < 2 типов → разрешаем
+                    if len(available) < 2:
+                        available.append(BetType.EXACT_NUMBER)
+            elif remaining_quota >= 1 and existing_bet_type == BetType.EXACT_NUMBER:
+                available.append(BetType.EXACT_NUMBER)
         
         return available
     

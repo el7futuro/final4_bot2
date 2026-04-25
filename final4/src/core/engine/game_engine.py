@@ -1194,24 +1194,26 @@ class GameEngine:
         """
         Если выбрать этого игрока сейчас, останется ли достаточно
         играбельных игроков на все будущие ходы?
-        
-        Логика: после выбора кандидата, оставшихся играбельных >= оставшихся ходов.
+
+        Combo-aware: игрок выбираем только если у него существует ХОТЯ БЫ ОДНА
+        валидная по правилам пара ставок (t1, t2), которая ОДНОВРЕМЕННО
+        безопасна для будущих ходов (после её размещения остаётся
+        playable >= turns_remaining оставшихся полевых).
+
+        Это устраняет проблему отдельных проверок ч/н и голов, когда каждая
+        по отдельности проходит, но вместе создают тупик.
         """
         if match.phase != MatchPhase.MAIN_TIME:
             return True
-        
+
         turn_number = match.current_turn.turn_number if match.current_turn else 1
         turns_remaining_after = 11 - turn_number  # ходов ПОСЛЕ текущего
-        
+
         if turns_remaining_after <= 0:
             return True  # Последний ход — выбор не влияет на будущее
-        
-        # Считаем играбельных БЕЗ кандидата
-        playable_without_candidate = self._count_playable_players(
-            match, manager_id, exclude_ids={candidate.id}
-        )
-        
-        return playable_without_candidate >= turns_remaining_after
+
+        # Combo-aware: существует ли валидная безопасная комбинация для кандидата
+        return self.bet_tracker.has_valid_safe_combo(match, manager_id, candidate)
     
     def get_available_players(
         self,

@@ -236,6 +236,204 @@ class BetTracker:
         return limit - used
     
     
+    def _simulate_bets_safe_for_future(
+        self,
+        match: Match,
+        manager_id: UUID,
+        player: Player,
+        proposed_bet_types: List[BetType]
+    ) -> bool:
+        """
+        Симулирует размещение указанных ставок ДОПОЛНИТЕЛЬНО к текущему состоянию
+        match.bets и проверяет: смогут ли все оставшиеся ходы быть сыграны
+        (каждый оставшийся полевой игрок имеет >= 2 типа ставок, и таких 
+        играбельных >= turns_remaining).
+
+        Это ключевая комбинированная проверка: учитывает все правила
+        ОДНОВРЕМЕННО (бюджет ч/н, квоты голов по позициям, формация невидимо
+        через достаточность игроков). Применяется после симуляции ВСЕХ
+        ставок текущего хода (а не каждой по отдельности).
+        """
+        if match.phase != MatchPhase.MAIN_TIME:
+            return True
+
+        team = match.get_team(manager_id)
+        if not team:
+            return True
+
+        turn_number = match.current_turn.turn_number if match.current_turn else 1
+        turns_remaining = 11 - turn_number  # ходов ПОСЛЕ текущего
+        if turns_remaining <= 0:
+            return True
+
+        used_ids = set(match.get_used_players(manager_id)) | {player.id}
+
+        # Текущее состояние из match.bets
+        eo_used = self._count_even_odd_bets(match, manager_id)
+        df_goals = 0
+        mf_goals = 0
+        fw_goals = 0
+        for bet in match.bets:
+            if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
+                bp = team.get_player_by_id(bet.player_id)
+                if bp:
+                    if bp.position == Position.DEFENDER:
+                        df_goals += 1
+                    elif bp.position == Position.MIDFIELDER:
+                        mf_goals += 1
+                    elif bp.position == Position.FORWARD:
+                        fw_goals += 1
+
+        # Применяем proposed_bet_types
+        for bt in proposed_bet_types:
+            if bt == BetType.EVEN_ODD:
+                eo_used += 1
+            elif bt == BetType.EXACT_NUMBER:
+                if player.position == Position.DEFENDER:
+                    df_goals += 1
+                elif player.position == Position.MIDFIELDER:
+                    mf_goals += 1
+                elif player.position == Position.FORWARD:
+                    fw_goals += 1
+
+        eo_budget = max(0, 6 - eo_used)
+        df_quota_left = max(0, 1 - df_goals)
+        mf_quota_left = max(0, 3 - mf_goals)
+        fw_quota_left = max(0, 4 - fw_goals)
+
+        # Считаем сколько оставшихся полевых игроков (не вкл. кандидата)
+        # имеют >= 2 РАЗНЫХ типа ставок при новом состоянии.
+        playable = 0
+        for p in team.players:
+            if p.id in used_ids or not p.is_available:
+                continue
+            if p.position == Position.GOALKEEPER:
+                continue
+
+            types = 0
+            # HIGH_LOW — всегда доступен полевым
+            types += 1
+            # EXACT_NUMBER — если квота позиции > 0
+            if p.position == Position.DEFENDER and df_quota_left > 0:
+                types += 1
+            elif p.position == Position.MIDFIELDER and mf_quota_left > 0:
+                types += 1
+            elif p.position == Position.FORWARD and fw_quota_left > 0:
+                types += 1
+            # EVEN_ODD — для не-форвардов и при наличии бюджета
+            if p.position != Position.FORWARD and eo_budget > 0:
+                types += 1
+
+            if types >= 2:
+                playable += 1
+
+        return playable >= turns_remaining
+
+    def _is_pair_rules_valid(
+        self,
+        match: Match,
+        manager_id: UUID,
+        player: Player,
+        t1: BetType,
+        t2: BetType
+    ) -> bool:
+        """
+        Проверить что пара ставок (t1, t2) на одного игрока в текущем ходе
+        соответствует базовым правилам (без проверки future-safety):
+        - Две ставки должны быть РАЗНЫХ типов, кроме (EXACT, EXACT)
+          когда у позиции хватает квоты голов.
+        - В ОСНОВНОЕ ВРЕМЯ: форварды не могут ставить EVEN_ODD; бюджет ч/н
+          (с учётом текущего расхода) должен покрывать кол-во EVEN_ODD в паре;
+          квота голов по позиции должна покрывать кол-во EXACT_NUMBER в паре.
+        - В ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ: ровно один EXACT_NUMBER; вторая — HIGH_LOW
+          или EVEN_ODD (EVEN_ODD только не для форвардов).
+        Бюджет ч/н в ET не ограничен (по правилам игры).
+        """
+        if player.position == Position.GOALKEEPER:
+            return False
+
+        team = match.get_team(manager_id)
+        if not team:
+            return False
+
+        # ДОПОЛНИТЕЛЬНОЕ ВРЕМЯ: ровно одна ставка на гол
+        if match.phase == MatchPhase.EXTRA_TIME:
+            n_goals = (1 if t1 == BetType.EXACT_NUMBER else 0) + \
+                      (1 if t2 == BetType.EXACT_NUMBER else 0)
+            if n_goals != 1:
+                return False
+            # Вторая (не-голевая) ставка
+            other = t1 if t2 == BetType.EXACT_NUMBER else t2
+            if other == BetType.EVEN_ODD and player.position == Position.FORWARD:
+                return False
+            if other not in (BetType.HIGH_LOW, BetType.EVEN_ODD):
+                return False
+            return True
+
+        # ОСНОВНОЕ ВРЕМЯ
+        # Запрет одинаковых типов (кроме EXACT+EXACT при наличии квоты)
+        if t1 == t2 and t1 != BetType.EXACT_NUMBER:
+            return False
+
+        # Форварды не могут EVEN_ODD
+        if player.position == Position.FORWARD and \
+                (t1 == BetType.EVEN_ODD or t2 == BetType.EVEN_ODD):
+            return False
+
+        # Бюджет ч/н
+        n_eo = (1 if t1 == BetType.EVEN_ODD else 0) + \
+               (1 if t2 == BetType.EVEN_ODD else 0)
+        eo_used = self._count_even_odd_bets(match, manager_id)
+        if eo_used + n_eo > 6:
+            return False
+
+        # Квота голов по позиции
+        n_goals = (1 if t1 == BetType.EXACT_NUMBER else 0) + \
+                  (1 if t2 == BetType.EXACT_NUMBER else 0)
+        if n_goals > 0:
+            remaining = self._get_remaining_goal_quota(match, manager_id, player, team)
+            if n_goals > remaining:
+                return False
+
+        return True
+
+    def has_valid_safe_combo(
+        self,
+        match: Match,
+        manager_id: UUID,
+        player: Player
+    ) -> bool:
+        """
+        Существует ли хотя бы одна валидная (по правилам) и безопасная (по 
+        будущим ходам) комбинация из 2 ставок для этого игрока в этом ходу?
+
+        Используется для:
+        - проверки "выбираем ли игрока" (вместо отдельных проверок ч/н и голов)
+        - turn 1 (только вратарь, 1 ставка) — отдельная логика
+        """
+        # Вратарь
+        if player.position == Position.GOALKEEPER:
+            turn_number = match.current_turn.turn_number if match.current_turn else 1
+            if match.phase != MatchPhase.MAIN_TIME or turn_number != 1:
+                return False
+            # GK на 1-м ходу — только EVEN_ODD
+            if self._count_even_odd_bets(match, manager_id) >= 6:
+                return False
+            return True
+
+        # Полевые: перебираем все упорядоченные пары (для покрытия EXACT,EXACT)
+        all_types = [BetType.EVEN_ODD, BetType.HIGH_LOW, BetType.EXACT_NUMBER]
+        for t1 in all_types:
+            for t2 in all_types:
+                if not self._is_pair_rules_valid(match, manager_id, player, t1, t2):
+                    continue
+                if not self._simulate_bets_safe_for_future(
+                    match, manager_id, player, [t1, t2]
+                ):
+                    continue
+                return True
+        return False
+
     def _even_odd_safe_for_future(
         self,
         match: Match,
@@ -433,53 +631,65 @@ class BetTracker:
             
             return available
         
-        # ОСНОВНОЕ ВРЕМЯ — стандартные правила
-        # Проверяем, какие типы уже использованы в этом ходу
+        # ОСНОВНОЕ ВРЕМЯ — combo-aware логика.
+        # Тип T доступен если:
+        # - для ПЕРВОЙ ставки: существует валидный T2 такой что пара (T, T2)
+        #   проходит правила И `_simulate_bets_safe_for_future([T, T2])`.
+        # - для ВТОРОЙ ставки (T1 уже в match.bets): добавление T поверх
+        #   валидно по правилам И `_simulate_bets_safe_for_future([T])`.
         existing_bet_type = self._get_player_bet_type_this_turn(match, manager_id, player.id)
-        
-        # Чёт/нечёт — для всех кроме форвардов (нельзя две одинаковые)
-        if player.position != Position.FORWARD:
-            even_odd_count = self._count_even_odd_bets(match, manager_id)
-            if even_odd_count < 6 and existing_bet_type != BetType.EVEN_ODD:
-                # Блокируем ч/н только если без него останется >= 2 типа
-                # (т.е. high_low + exact_number оба доступны)
-                team_check = match.get_team(manager_id)
-                has_goal_quota = False
-                if team_check:
-                    remaining_goal = self._get_remaining_goal_quota(match, manager_id, player, team_check)
-                    has_goal_quota = remaining_goal >= 1
-                
-                has_high_low = existing_bet_type != BetType.HIGH_LOW
-                
-                if has_goal_quota and has_high_low:
-                    # Без ч/н будет high_low + exact = 2 типа → можно проверять future
-                    if self._even_odd_safe_for_future(match, manager_id, player):
-                        available.append(BetType.EVEN_ODD)
-                    # Если unsafe — не добавляем ч/н, игрок обойдётся без него
-                else:
-                    # Без ч/н будет < 2 типа → ч/н ОБЯЗАТЕЛЕН
-                    available.append(BetType.EVEN_ODD)
-        
-        # Больше/меньше — всегда доступно для полевых (нельзя две одинаковые)
-        if existing_bet_type != BetType.HIGH_LOW:
-            available.append(BetType.HIGH_LOW)
-        
-        # Точное число (гол) — проверяем квоту
-        team = match.get_team(manager_id)
-        if team:
-            remaining_quota = self._get_remaining_goal_quota(match, manager_id, player, team)
-            
-            if remaining_quota >= 1 and existing_bet_type != BetType.EXACT_NUMBER:
-                # Проверяем: если потратить гол-квоту, не сломает ли будущие формации?
-                if self._goal_safe_for_future(match, manager_id, player):
-                    available.append(BetType.EXACT_NUMBER)
-                else:
-                    # Гол небезопасен, но если без гола у игрока < 2 типов → разрешаем
-                    if len(available) < 2:
-                        available.append(BetType.EXACT_NUMBER)
-            elif remaining_quota >= 1 and existing_bet_type == BetType.EXACT_NUMBER:
-                available.append(BetType.EXACT_NUMBER)
-        
+        all_types = [BetType.EVEN_ODD, BetType.HIGH_LOW, BetType.EXACT_NUMBER]
+
+        # Форварды не могут EVEN_ODD
+        candidate_types = [t for t in all_types
+                           if not (player.position == Position.FORWARD and t == BetType.EVEN_ODD)]
+
+        if existing_bet_type is None:
+            # Первая ставка: ищем для каждого T хотя бы один T2 чтобы (T,T2) проходила
+            for t1 in candidate_types:
+                for t2 in all_types:
+                    if not self._is_pair_rules_valid(match, manager_id, player, t1, t2):
+                        continue
+                    if not self._simulate_bets_safe_for_future(
+                        match, manager_id, player, [t1, t2]
+                    ):
+                        continue
+                    available.append(t1)
+                    break
+        else:
+            # Вторая ставка: проверяем добавление одиночной T2 поверх T1.
+            # Используем validate_bet (одиночная валидация против текущего
+            # состояния, T1 уже в match.bets и учтён в счётчиках).
+            from uuid import uuid4 as _uuid4
+            for t2 in candidate_types:
+                # Минимальный bet для проверки (поля с конкретными значениями
+                # не валидируются здесь — проверяются только типы и квоты).
+                hypo_kwargs = {
+                    "id": _uuid4(),
+                    "match_id": match.id,
+                    "manager_id": manager_id,
+                    "player_id": player.id,
+                    "turn_number": (match.current_turn.turn_number if match.current_turn else 1),
+                    "bet_type": t2,
+                }
+                from ..models.bet import EvenOddChoice, HighLowChoice
+                if t2 == BetType.EVEN_ODD:
+                    hypo_kwargs["even_odd_choice"] = EvenOddChoice.EVEN
+                elif t2 == BetType.HIGH_LOW:
+                    hypo_kwargs["high_low_choice"] = HighLowChoice.HIGH
+                elif t2 == BetType.EXACT_NUMBER:
+                    hypo_kwargs["exact_number"] = 1
+                hypo = Bet(**hypo_kwargs)
+                try:
+                    self.validate_bet(match, manager_id, player, hypo)
+                except ValueError:
+                    continue
+                if not self._simulate_bets_safe_for_future(
+                    match, manager_id, player, [t2]
+                ):
+                    continue
+                available.append(t2)
+
         return available
     
     def can_player_bet(

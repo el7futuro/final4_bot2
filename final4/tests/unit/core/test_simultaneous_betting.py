@@ -356,8 +356,9 @@ class TestPlayerAvailability:
         forward2 = match.team1.players[10]
         available_types = engine.get_available_bet_types(match, manager1_id, forward2.id)
         
-        # Только HIGH_LOW
-        assert available_types == [BetType.HIGH_LOW]
+        # Combo-aware: с 1 валидным типом (HIGH_LOW) нельзя сделать пару из 2,
+        # поэтому возвращается пустой список — игрок объективно "не может ставить"
+        assert available_types == []
         
         # Проверяем, что форвард 2 НЕ в списке доступных игроков
         available_players = engine.get_available_players(match, manager1_id)

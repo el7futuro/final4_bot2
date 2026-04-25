@@ -463,15 +463,20 @@ class TestFormationValidation:
         )
         t1 = match.team1
         
-        # 6 чёт/нечёт ставок
+        # 6 чёт/нечёт ставок (бюджет EO исчерпан)
         for i in range(6):
             match.bets.append(Bet(
                 match_id=match.id, manager_id=m1,
                 player_id=t1.players[1+i].id, turn_number=2+i,
                 bet_type=BetType.EVEN_ODD, even_odd_choice=EvenOddChoice.EVEN
             ))
+        # Также отметим этих игроков как использованных, чтобы combo-feasibility 
+        # для оставшихся ходов проходил (turns_remaining = 11 - 8 = 3)
+        for i in range(6):
+            match.used_players_main_m1.append(str(t1.players[1+i].id))
+        match.current_turn = TurnState(turn_number=8)
         
-        df = t1.players[1]  # Защитник
+        df = t1.players[1+6]  # Свежий защитник
         types = engine.bet_tracker.get_available_bet_types(match, m1, df)
         assert BetType.HIGH_LOW in types
         assert BetType.EXACT_NUMBER in types

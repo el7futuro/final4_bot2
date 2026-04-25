@@ -58,61 +58,58 @@ class TestComboFutureSafety:
     def test_no_deadlock_at_turn_9(self):
         """
         Регрессия из логов: к ходу 9 m1 имел 0 доступных игроков из 8 оставшихся.
-        После фикса combo-aware валидатор должен предотвращать такой сценарий
-        ещё на ходах 7-8, не давая поставить пары, которые исчерпают и квоту голов,
-        и бюджет ч/н одновременно.
+        После фикса combo-aware валидатор должен предотвращать такой сценарий.
 
-        Симулируем 11-ходовой матч полным автоплеем, выбирая первый доступный
-        игрок и первый доступный тип ставки. Если фикс работает — все 11 ходов
-        пройдут, на каждом ходу len(available_players) >= 1.
+        Прогоняем 50 случайных автоплеев — ни на одном ходу не должно возникнуть
+        "Available players: 0" в основном времени.
         """
         import random
-        random.seed(123)
-        engine, match, m1, m2 = _setup()
+        for seed in range(50):
+            random.seed(seed)
+            engine, match, m1, m2 = _setup()
 
-        for turn in range(1, 12):
-            assert match.current_turn is not None
-            assert match.current_turn.turn_number == turn
+            for turn in range(1, 12):
+                if match.phase != MatchPhase.MAIN_TIME:
+                    break
+                assert match.current_turn is not None
+                assert match.current_turn.turn_number == turn
 
-            for mgr in (m1, m2):
-                avail = engine.get_available_players(match, mgr)
-                assert len(avail) >= 1, (
-                    f"Тупик: ход {turn}, менеджер {mgr}, доступных 0. "
-                    f"Это означает что combo-валидатор пропустил ставку, "
-                    f"которая создала dead-end."
-                )
-                player = avail[0]
-                required = 1 if turn == 1 else 2
-                for _ in range(required):
-                    types = engine.get_available_bet_types(match, mgr, player.id)
-                    assert types, f"Нет валидных типов для игрока {player.name}"
-                    bet = _bet(match.id, mgr, player.id,
-                               match.current_turn.turn_number, types[0])
-                    match, _ = engine.place_bet(match, mgr, player.id, bet)
-                engine.confirm_bets(match, mgr)
-
-            # Кубик
-            match, dice, _ = engine.roll_dice(match)
-            # Игнорируем yellow card / penalty для упрощения регрессии
-            if match.current_turn and match.current_turn.waiting_for_yellow_card_choice:
-                match.current_turn.waiting_for_yellow_card_choice = False
-                match.current_turn.yellow_card_target_manager_id = None
-                match.current_turn.yellow_card_target_player_id = None
-                match.current_turn.yellow_card_id = None
-            if match.current_turn and match.current_turn.waiting_for_penalty_roll:
-                # Отмечаем все нерешённые пенальти как промах
-                for card in match.whistle_cards_drawn:
-                    if (card.card_type.value == "penalty"
-                            and card.penalty_scored is None
-                            and card.turn_applied == match.current_turn.turn_number):
-                        match, _, _ = engine.resolve_penalty(
-                            match, card.applied_by_manager_id, "high"
+                for mgr in (m1, m2):
+                    avail = engine.get_available_players(match, mgr)
+                    assert len(avail) >= 1, (
+                        f"[seed={seed}] Тупик: ход {turn}, mgr {mgr}, доступных 0"
+                    )
+                    player = random.choice(avail)
+                    required = 1 if turn == 1 else 2
+                    for _ in range(required):
+                        types = engine.get_available_bet_types(match, mgr, player.id)
+                        assert types, (
+                            f"[seed={seed}] Нет валидных типов для {player.name}"
                         )
-                        break
-            match = engine.end_turn(match)
-            if match.status != MatchStatus.IN_PROGRESS and match.phase == MatchPhase.MAIN_TIME:
-                # Матч завершён до 11 ходов — это нормально (досрочная победа)
-                break
+                        bt = random.choice(types)
+                        bet = _bet(match.id, mgr, player.id,
+                                   match.current_turn.turn_number, bt)
+                        match, _ = engine.place_bet(match, mgr, player.id, bet)
+                    engine.confirm_bets(match, mgr)
+
+                match, _, _ = engine.roll_dice(match)
+                if match.current_turn and match.current_turn.waiting_for_yellow_card_choice:
+                    match.current_turn.waiting_for_yellow_card_choice = False
+                    match.current_turn.yellow_card_target_manager_id = None
+                    match.current_turn.yellow_card_target_player_id = None
+                    match.current_turn.yellow_card_id = None
+                if match.current_turn and match.current_turn.waiting_for_penalty_roll:
+                    for card in match.whistle_cards_drawn:
+                        if (card.card_type.value == "penalty"
+                                and card.penalty_scored is None
+                                and card.turn_applied == match.current_turn.turn_number):
+                            match, _, _ = engine.resolve_penalty(
+                                match, card.applied_by_manager_id, "high"
+                            )
+                            break
+                match = engine.end_turn(match)
+                if match.status != MatchStatus.IN_PROGRESS:
+                    break
 
     def test_simulate_bets_safe_for_future_returns_bool(self):
         engine, match, m1, _ = _setup()

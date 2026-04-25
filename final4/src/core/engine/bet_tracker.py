@@ -236,6 +236,17 @@ class BetTracker:
         return limit - used
     
     
+    # Допустимые формации (DF, MF, FW) — 10 полевых игроков
+    VALID_FORMATIONS = [
+        (4, 4, 2),
+        (4, 3, 3),
+        (3, 5, 2),
+        (3, 4, 3),
+        (5, 3, 2),
+        (5, 2, 3),
+        (3, 3, 4),
+    ]
+
     def _simulate_bets_safe_for_future(
         self,
         match: Match,
@@ -244,15 +255,18 @@ class BetTracker:
         proposed_bet_types: List[BetType]
     ) -> bool:
         """
-        Симулирует размещение указанных ставок ДОПОЛНИТЕЛЬНО к текущему состоянию
-        match.bets и проверяет: смогут ли все оставшиеся ходы быть сыграны
-        (каждый оставшийся полевой игрок имеет >= 2 типа ставок, и таких 
-        играбельных >= turns_remaining).
+        Симулирует размещение указанных ставок на кандидате И проверяет
+        что оставшиеся ходы можно сыграть полностью:
+        - Финальный набор использованных полевых должен попадать в одну из
+          допустимых формаций (4-4-2, 4-3-3, 3-5-2, 3-4-3, 5-3-2, 5-2-3, 3-3-4).
+        - Каждый из оставшихся ходов (turns_remaining) — это 1 игрок с парой
+          из 2 разных типов ставок, которые ВМЕСТЕ должны вписаться в общий
+          бюджет ч/н (≤6) и квоты голов по позициям (DF≤1, MF≤3, FW≤4).
 
-        Это ключевая комбинированная проверка: учитывает все правила
-        ОДНОВРЕМЕННО (бюджет ч/н, квоты голов по позициям, формация невидимо
-        через достаточность игроков). Применяется после симуляции ВСЕХ
-        ставок текущего хода (а не каждой по отдельности).
+        КЛЮЧЕВОЕ: проверка единая — формация И бюджеты И квоты ОДНОВРЕМЕННО,
+        а не по отдельности. Возможные пары на полевого:
+        - DF/MF: (HL,EO), (HL,EXACT), (EO,EXACT) — только 1 EXACT за пару (квота 1/3)
+        - FW:    (HL,EXACT) — единственный вариант (FW не может EO)
         """
         if match.phase != MatchPhase.MAIN_TIME:
             return True
@@ -268,11 +282,20 @@ class BetTracker:
 
         used_ids = set(match.get_used_players(manager_id)) | {player.id}
 
-        # Текущее состояние из match.bets
+        # Текущее состояние из match.bets (включает уже размещённые ставки этого хода)
         eo_used = self._count_even_odd_bets(match, manager_id)
         df_goals = 0
         mf_goals = 0
         fw_goals = 0
+        used_df = used_mf = used_fw = 0
+        for p in team.players:
+            if p.id in match.get_used_players(manager_id):
+                if p.position == Position.DEFENDER:
+                    used_df += 1
+                elif p.position == Position.MIDFIELDER:
+                    used_mf += 1
+                elif p.position == Position.FORWARD:
+                    used_fw += 1
         for bet in match.bets:
             if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
                 bp = team.get_player_by_id(bet.player_id)
@@ -284,7 +307,7 @@ class BetTracker:
                     elif bp.position == Position.FORWARD:
                         fw_goals += 1
 
-        # Применяем proposed_bet_types
+        # Применяем proposed_bet_types к кандидату (его ставки текущего хода)
         for bt in proposed_bet_types:
             if bt == BetType.EVEN_ODD:
                 eo_used += 1
@@ -296,38 +319,59 @@ class BetTracker:
                 elif player.position == Position.FORWARD:
                     fw_goals += 1
 
-        eo_budget = max(0, 6 - eo_used)
-        df_quota_left = max(0, 1 - df_goals)
-        mf_quota_left = max(0, 3 - mf_goals)
-        fw_quota_left = max(0, 4 - fw_goals)
+        # Кандидат добавляется к used (его позиция) — для финальной формации
+        if player.position == Position.DEFENDER:
+            used_df += 1
+        elif player.position == Position.MIDFIELDER:
+            used_mf += 1
+        elif player.position == Position.FORWARD:
+            used_fw += 1
 
-        # Считаем сколько оставшихся полевых игроков (не вкл. кандидата)
-        # имеют >= 2 РАЗНЫХ типа ставок при новом состоянии.
-        playable = 0
+        eo_budget = max(0, 6 - eo_used)
+        df_q = max(0, 1 - df_goals)
+        mf_q = max(0, 3 - mf_goals)
+        fw_q = max(0, 4 - fw_goals)
+
+        # Оставшиеся НЕиспользованные полевые по позициям (без кандидата)
+        r_df = r_mf = r_fw = 0
         for p in team.players:
             if p.id in used_ids or not p.is_available:
                 continue
-            if p.position == Position.GOALKEEPER:
+            if p.position == Position.DEFENDER:
+                r_df += 1
+            elif p.position == Position.MIDFIELDER:
+                r_mf += 1
+            elif p.position == Position.FORWARD:
+                r_fw += 1
+
+        # Проверяем: ∃ формация (d,m,f) такая что
+        # - need_df + need_mf + need_fw == turns_remaining
+        # - need_df ≥ 0, need_mf ≥ 0, need_fw ≥ 0
+        # - need_df ≤ r_df, need_mf ≤ r_mf, need_fw ≤ r_fw
+        # - need_fw ≤ fw_q (FW обязан брать EXACT)
+        # - ∃ x_df ∈ [0, min(need_df, df_q)], x_mf ∈ [0, min(need_mf, mf_q)]:
+        #     (need_df - x_df) + (need_mf - x_mf) ≤ eo_budget
+        for d, m, f in self.VALID_FORMATIONS:
+            need_df = d - used_df
+            need_mf = m - used_mf
+            need_fw = f - used_fw
+            if need_df < 0 or need_mf < 0 or need_fw < 0:
                 continue
+            if need_df + need_mf + need_fw != turns_remaining:
+                continue
+            if need_df > r_df or need_mf > r_mf or need_fw > r_fw:
+                continue
+            if need_fw > fw_q:
+                continue
+            # Минимум EO: максимизируем EXACT для DF и MF
+            max_x_df = min(need_df, df_q)
+            max_x_mf = min(need_mf, mf_q)
+            min_eo = (need_df - max_x_df) + (need_mf - max_x_mf)
+            if min_eo <= eo_budget:
+                return True
 
-            types = 0
-            # HIGH_LOW — всегда доступен полевым
-            types += 1
-            # EXACT_NUMBER — если квота позиции > 0
-            if p.position == Position.DEFENDER and df_quota_left > 0:
-                types += 1
-            elif p.position == Position.MIDFIELDER and mf_quota_left > 0:
-                types += 1
-            elif p.position == Position.FORWARD and fw_quota_left > 0:
-                types += 1
-            # EVEN_ODD — для не-форвардов и при наличии бюджета
-            if p.position != Position.FORWARD and eo_budget > 0:
-                types += 1
+        return False
 
-            if types >= 2:
-                playable += 1
-
-        return playable >= turns_remaining
 
     def _is_pair_rules_valid(
         self,

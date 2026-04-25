@@ -339,7 +339,54 @@ async def _handle_make_bet(callback: CallbackQuery, state: FSMContext, match, us
             available_types = storage.engine.get_available_bet_types(match, user.id, UUID(current_bet_player_id))
             
             if not available_types:
-                await callback.answer("Нет доступных типов ставок", show_alert=True)
+                # Объясняем причину и возвращаем к выбору игрока
+                reason = storage.engine.bet_tracker.explain_unavailable_reason(
+                    match, user.id, player
+                )
+                await callback.answer()
+                # Сбрасываем привязку к этому игроку, чтобы можно было выбрать другого
+                # ВАЖНО: только если первая ставка ещё не размещена
+                turn_obj = match.current_turn
+                first_bet_placed = False
+                if turn_obj:
+                    if is_user_m1 and turn_obj.manager1_bets:
+                        first_bet_placed = True
+                    elif not is_user_m1 and turn_obj.manager2_bets:
+                        first_bet_placed = True
+
+                if first_bet_placed:
+                    # Игрок уже залочен первой ставкой — нельзя сменить.
+                    # Показываем причину как ошибку (это не должно происходить
+                    # с combo-aware фильтрами, но защитимся).
+                    await callback.message.edit_text(
+                        f"⚠️ <b>Невозможно сделать вторую ставку</b>\n\n{reason}\n\n"
+                        f"<i>Это критическая ситуация — пожалуйста, сообщите разработчику.</i>",
+                        reply_markup=Keyboards.game_actions_simultaneous(
+                            bets_count=len(turn_obj.manager1_bets if is_user_m1 else turn_obj.manager2_bets),
+                            required_bets=2,
+                            is_confirmed=False,
+                            both_ready=False,
+                        )
+                    )
+                    return
+
+                # Перерисовываем экран выбора игрока
+                available_players = storage.engine.get_available_players(match, user.id)
+                if available_players:
+                    await state.set_state(MatchStates.selecting_bet_player)
+                    await callback.message.edit_text(
+                        f"⚠️ <b>Этот игрок недоступен для ставки</b>\n\n{reason}\n\n"
+                        f"━━━━━━━━━━━━━━━━━━━\n"
+                        f"🎯 <b>Выберите другого игрока:</b>",
+                        reply_markup=Keyboards.bet_player_select(available_players)
+                    )
+                else:
+                    no_players_msg = storage.engine.bet_tracker.explain_no_available_players(
+                        match, user.id
+                    )
+                    await callback.message.edit_text(
+                        f"{reason}\n\n{no_players_msg}"
+                    )
                 return
             
             # Проверяем есть ли уже ставки в этом ходе
@@ -384,7 +431,13 @@ async def _handle_make_bet(callback: CallbackQuery, state: FSMContext, match, us
             logger.warning(f"[DEBUG] No team for user {user.id}!")
             logger.warning(f"[DEBUG] match.team1 manager: {match.manager1_id}, match.team2 manager: {match.manager2_id}")
         
-        await callback.answer("Нет доступных игроков!", show_alert=True)
+        # Информативное сообщение пользователю с причиной
+        reason_text = storage.engine.bet_tracker.explain_no_available_players(match, user.id)
+        await callback.answer()
+        try:
+            await callback.message.edit_text(reason_text)
+        except Exception:
+            await callback.message.answer(reason_text)
         return
     
     # Отладка: показать сколько игроков использовано
@@ -424,7 +477,34 @@ async def cb_bet_player_selected(callback: CallbackQuery, state: FSMContext):
     available_types = storage.engine.get_available_bet_types(match, user.id, UUID(player_id))
     
     if not available_types:
-        await callback.answer("Нет доступных типов ставок", show_alert=True)
+        # Объясняем причину и возвращаем к выбору игрока
+        team = match.get_team(user.id)
+        player = team.get_player_by_id(UUID(player_id)) if team else None
+        if player:
+            reason = storage.engine.bet_tracker.explain_unavailable_reason(
+                match, user.id, player
+            )
+        else:
+            reason = "Игрок не найден"
+
+        await callback.answer()  # Сбрасываем "часики"
+        # Перерисовываем экран выбора игрока с подсказкой почему текущий не подходит
+        available_players = storage.engine.get_available_players(match, user.id)
+        if available_players:
+            await state.set_state(MatchStates.selecting_bet_player)
+            await callback.message.edit_text(
+                f"⚠️ <b>Этот игрок недоступен для ставки</b>\n\n{reason}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━\n"
+                f"🎯 <b>Выберите другого игрока:</b>",
+                reply_markup=Keyboards.bet_player_select(available_players)
+            )
+        else:
+            no_players_msg = storage.engine.bet_tracker.explain_no_available_players(
+                match, user.id
+            )
+            await callback.message.edit_text(
+                f"{reason}\n\n{no_players_msg}"
+            )
         return
     
     await state.update_data(bet_player_id=player_id)

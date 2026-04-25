@@ -447,14 +447,6 @@ class BetTracker:
         manager_id: UUID,
         player: Player
     ) -> bool:
-        """
-        Существует ли хотя бы одна валидная (по правилам) и безопасная (по 
-        будущим ходам) комбинация из 2 ставок для этого игрока в этом ходу?
-
-        Используется для:
-        - проверки "выбираем ли игрока" (вместо отдельных проверок ч/н и голов)
-        - turn 1 (только вратарь, 1 ставка) — отдельная логика
-        """
         # Вратарь
         if player.position == Position.GOALKEEPER:
             turn_number = match.current_turn.turn_number if match.current_turn else 1
@@ -477,6 +469,164 @@ class BetTracker:
                     continue
                 return True
         return False
+
+    def explain_unavailable_reason(
+        self,
+        match: Match,
+        manager_id: UUID,
+        player: Player
+    ) -> str:
+        """
+        Вернуть человекочитаемое объяснение, почему у игрока нет доступных
+        пар ставок (и/или почему он не выбираем). Возвращает строку на русском
+        с расшифровкой состояния бюджетов и квот.
+        """
+        team = match.get_team(manager_id)
+        if not team:
+            return "Команда не найдена"
+
+        turn_number = match.current_turn.turn_number if match.current_turn else 1
+
+        # Базовые проверки игрока
+        if not player.is_available:
+            return f"Игрок {player.name} удалён с поля (красная карточка)"
+
+        if match.phase == MatchPhase.MAIN_TIME:
+            if turn_number == 1 and player.position != Position.GOALKEEPER:
+                return "На 1-м ходу доступен только вратарь"
+            if turn_number > 1 and player.position == Position.GOALKEEPER:
+                return "Вратарь делает ставку только на 1-м ходу"
+
+        if match.phase == MatchPhase.EXTRA_TIME and player.position == Position.GOALKEEPER:
+            return "Вратарь не участвует в дополнительном времени"
+
+        if match.is_player_used(manager_id, player.id):
+            return f"Игрок {player.name} уже использован в этом матче"
+
+        # ОСНОВНОЕ ВРЕМЯ — собираем диагностику бюджетов
+        if match.phase != MatchPhase.MAIN_TIME:
+            return "Игрок недоступен (правила фазы)"
+
+        eo_used = self._count_even_odd_bets(match, manager_id)
+        eo_budget = max(0, 6 - eo_used)
+
+        df_g = mf_g = fw_g = 0
+        for bet in match.bets:
+            if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
+                bp = team.get_player_by_id(bet.player_id)
+                if bp:
+                    if bp.position == Position.DEFENDER:
+                        df_g += 1
+                    elif bp.position == Position.MIDFIELDER:
+                        mf_g += 1
+                    elif bp.position == Position.FORWARD:
+                        fw_g += 1
+
+        df_q = max(0, 1 - df_g)
+        mf_q = max(0, 3 - mf_g)
+        fw_q = max(0, 4 - fw_g)
+        turns_remaining = 11 - turn_number
+
+        # Анализируем что блокирует игрока
+        all_types = [BetType.EVEN_ODD, BetType.HIGH_LOW, BetType.EXACT_NUMBER]
+        any_pair_rules_valid = False
+        any_pair_safe = False
+        for t1 in all_types:
+            for t2 in all_types:
+                if not self._is_pair_rules_valid(match, manager_id, player, t1, t2):
+                    continue
+                any_pair_rules_valid = True
+                if self._simulate_bets_safe_for_future(
+                    match, manager_id, player, [t1, t2]
+                ):
+                    any_pair_safe = True
+                    break
+            if any_pair_safe:
+                break
+
+        budget_info = (
+            f"\n\n📊 <b>Состояние бюджетов:</b>\n"
+            f"• Чёт/нечёт: {eo_used}/6 (осталось {eo_budget})\n"
+            f"• Голы DF: {df_g}/1 (осталось {df_q})\n"
+            f"• Голы MF: {mf_g}/3 (осталось {mf_q})\n"
+            f"• Голы FW: {fw_g}/4 (осталось {fw_q})\n"
+            f"• Ходов до конца основного времени: {max(0, turns_remaining)}"
+        )
+
+        if not any_pair_rules_valid:
+            # Игрок физически не может составить пару
+            if player.position == Position.FORWARD:
+                if fw_q < 1:
+                    return (f"Форвард {player.name} не может ставить: "
+                            f"квота голов форвардов исчерпана (4/4), "
+                            f"а форварды не могут ставить на чёт/нечёт." + budget_info)
+            else:
+                missing = []
+                if eo_budget < 1:
+                    missing.append("бюджет чёт/нечёт исчерпан (6/6)")
+                pos_q = df_q if player.position == Position.DEFENDER else mf_q
+                pos_max = 1 if player.position == Position.DEFENDER else 3
+                if pos_q < 1:
+                    missing.append(f"квота голов {player.position.value} исчерпана ({pos_max}/{pos_max})")
+                if missing:
+                    return (f"{player.name}: невозможно составить пару из 2 разных типов — "
+                            + ", ".join(missing) + "." + budget_info)
+            return (f"{player.name}: нет валидной пары из 2 разных типов ставок."
+                    + budget_info)
+
+        if not any_pair_safe:
+            # Все пары валидны по правилам, но создают тупик в будущем
+            return (
+                f"⚠️ Любая пара ставок этого игрока создаст тупик в основном "
+                f"времени: оставшихся бюджетов и квот не хватит, чтобы все "
+                f"следующие {max(0, turns_remaining)} ход(а/ов) были сыграны "
+                f"полноценными парами ставок при достижимой формации."
+                + budget_info
+            )
+
+        return f"Игрок {player.name} доступен"
+
+    def explain_no_available_players(
+        self,
+        match: Match,
+        manager_id: UUID
+    ) -> str:
+        """
+        Объяснить, почему вообще нет доступных игроков для ставки.
+        Возвращает обзор состояния и причин блокировки.
+        """
+        team = match.get_team(manager_id)
+        if not team:
+            return "Команда не найдена"
+
+        turn_number = match.current_turn.turn_number if match.current_turn else 1
+        if match.phase != MatchPhase.MAIN_TIME:
+            return ("Нет игроков доступных для ставки в текущей фазе. "
+                    "Возможно, все игроки уже использованы.")
+
+        eo_used = self._count_even_odd_bets(match, manager_id)
+        df_g = mf_g = fw_g = 0
+        for bet in match.bets:
+            if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
+                bp = team.get_player_by_id(bet.player_id)
+                if bp:
+                    if bp.position == Position.DEFENDER:
+                        df_g += 1
+                    elif bp.position == Position.MIDFIELDER:
+                        mf_g += 1
+                    elif bp.position == Position.FORWARD:
+                        fw_g += 1
+
+        return (
+            f"⚠️ <b>Нет доступных игроков для ставки.</b>\n\n"
+            f"Любой выбор приведёт к тупику в оставшихся {max(0, 11 - turn_number)} "
+            f"ход(ах) основного времени — бюджет ч/н или квоты голов исчерпаны "
+            f"настолько, что ни одна допустимая формация не достижима с парой "
+            f"валидных ставок на каждом будущем ходу.\n\n"
+            f"📊 <b>Состояние бюджетов:</b>\n"
+            f"• Чёт/нечёт: {eo_used}/6\n"
+            f"• Голы DF: {df_g}/1, MF: {mf_g}/3, FW: {fw_g}/4"
+        )
 
     def _even_odd_safe_for_future(
         self,

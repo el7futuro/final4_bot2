@@ -754,19 +754,27 @@ class MatchRenderer:
             lines.append(f"Счёт пенальти: <b>{vp}:{op}</b>\n")
             
             if match.penalty_results:
-                kick_num = 0
-                for kick in match.penalty_results:
-                    is_viewer = kick.manager_id == viewer_id
-                    who = "🔵" if is_viewer else "🔴"
-                    result = "⚽ ГОЛ" if kick.scored else "❌ МИМО"
-                    reason = "(есть передача)" if kick.scored else "(нет передачи)"
-                    
-                    # Нумерация по парам
-                    if is_viewer or kick_num % 2 == 0:
-                        pass
-                    kick_num += 1
-                    
-                    lines.append(f"  {who} {kick.player_name}: {result} {reason}")
+                # Разделяем регулярную серию и серию до промаха (sudden death)
+                regular_kicks = [k for k in match.penalty_results if not k.sudden_death]
+                sudden_kicks = [k for k in match.penalty_results if k.sudden_death]
+
+                if regular_kicks:
+                    lines.append("<i>Основная серия (5 ударов):</i>")
+                    for kick in regular_kicks:
+                        is_viewer = kick.manager_id == viewer_id
+                        who = "🔵" if is_viewer else "🔴"
+                        result = "⚽ ГОЛ" if kick.scored else "❌ МИМО"
+                        reason = "(есть передача)" if kick.scored else "(нет передачи)"
+                        lines.append(f"  {who} {kick.player_name}: {result} {reason}")
+
+                if sudden_kicks:
+                    lines.append("\n<i>💥 Серия до промаха (sudden death):</i>")
+                    for kick in sudden_kicks:
+                        is_viewer = kick.manager_id == viewer_id
+                        who = "🔵" if is_viewer else "🔴"
+                        result = "⚽ ГОЛ" if kick.scored else "❌ МИМО"
+                        reason = "(есть передача)" if kick.scored else "(нет передачи)"
+                        lines.append(f"  {who} {kick.player_name}: {result} {reason}")
             else:
                 lines.append("  (Данные ударов недоступны)")
         

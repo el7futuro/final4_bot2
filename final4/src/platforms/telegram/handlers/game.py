@@ -1661,57 +1661,73 @@ def _bot_make_bets(storage, match):
 
 
 def _auto_penalties(storage, match):
-    """Автоматическая серия пенальти с сохранением результатов каждого удара"""
+    """Автоматическая серия пенальти с сохранением результатов каждого удара.
+
+    Правила:
+    1. Регулярная серия: 5 ударов от каждой команды (всего до 10).
+       Игроки берутся в порядке: ET (с последнего хода), затем Main Time
+       (с 11-го хода до 1-го).
+    2. Если после 5 ударов счёт равный — серия до первого промаха
+       ("sudden death"): продолжаем по 1 удару от каждой команды парами.
+       После каждой пары проверяем: если счёт стал неравный — победитель
+       определён.
+    3. Если игроки в команде закончились — финиш по жребию (крайне редко).
+    """
     engine = storage.engine
     history = engine.get_match_history(match)
-    
+
     if not history:
         return engine.finish_by_lottery(match)
-    
+
     from src.core.models.match import PenaltyKick
-    
+
     players1 = history.get_all_players_ordered_for_penalties(match.manager1_id, match.manager1_id)
     players2 = history.get_all_players_ordered_for_penalties(match.manager2_id, match.manager1_id)
-    
+
     goals1, goals2 = 0, 0
-    max_kicks = min(5, len(players1), len(players2))
-    penalty_results = []
-    
-    for i in range(max_kicks):
-        # Удар команды 1
-        p1 = players1[i]
-        scored1 = p1.passes > 0
-        if scored1:
+    penalty_results: list = []
+
+    def _kick(player_stats, manager_id, sudden_death=False):
+        scored = player_stats.passes > 0
+        penalty_results.append(PenaltyKick(
+            manager_id=manager_id,
+            player_name=player_stats.player_name,
+            scored=scored,
+            sudden_death=sudden_death,
+        ))
+        return scored
+
+    # 1) Регулярная серия — до 5 ударов от каждой команды
+    initial_kicks = min(5, len(players1), len(players2))
+    for i in range(initial_kicks):
+        if _kick(players1[i], match.manager1_id):
             goals1 += 1
-        penalty_results.append(PenaltyKick(
-            manager_id=match.manager1_id,
-            player_name=p1.player_name,
-            scored=scored1
-        ))
-        
-        # Удар команды 2
-        p2 = players2[i]
-        scored2 = p2.passes > 0
-        if scored2:
+        if _kick(players2[i], match.manager2_id):
             goals2 += 1
-        penalty_results.append(PenaltyKick(
-            manager_id=match.manager2_id,
-            player_name=p2.player_name,
-            scored=scored2
-        ))
-    
+
+    # 2) Серия до промаха (sudden death) — пока счёт равный и есть игроки
+    next_idx = initial_kicks
+    max_pool = min(len(players1), len(players2))
+    while goals1 == goals2 and next_idx < max_pool:
+        if _kick(players1[next_idx], match.manager1_id, sudden_death=True):
+            goals1 += 1
+        if _kick(players2[next_idx], match.manager2_id, sudden_death=True):
+            goals2 += 1
+        next_idx += 1
+
     match.penalty_results = penalty_results
     match.penalty_score_m1 = goals1
     match.penalty_score_m2 = goals2
     match.score.manager1_goals += goals1
     match.score.manager2_goals += goals2
-    
+
     if goals1 > goals2:
         winner_id = match.manager1_id
     elif goals2 > goals1:
         winner_id = match.manager2_id
     else:
+        # Игроки закончились, всё ещё ничья — жребий (крайне редкий случай)
         winner_id = random.choice([match.manager1_id, match.manager2_id])
-    
+
     match = engine.finish_penalty_shootout(match, winner_id)
     return match

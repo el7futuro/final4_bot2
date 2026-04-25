@@ -110,6 +110,7 @@ class PenaltyKick(BaseModel):
     manager_id: UUID
     player_name: str
     scored: bool  # Забил или промазал
+    sudden_death: bool = False  # Удар в серии до промаха (после 5 основных)
 
 
 class MatchResult(BaseModel):

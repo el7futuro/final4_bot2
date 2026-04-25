@@ -243,11 +243,11 @@ class BetTracker:
         player: Player
     ) -> bool:
         """
-        Проверить: если этот игрок поставит ч/н, останется ли возможность
-        достичь хоть одной допустимой формации?
+        Если этот игрок поставит ч/н, останется ли достаточно играбельных 
+        игроков (с >= 2 типами ставок) на все будущие ходы?
         
-        Логика: симулируем что бюджет ч/н уменьшится на 1,
-        и проверяем что хотя бы одна формация достижима.
+        Симулируем: бюджет ч/н уменьшается на 1. Пересчитываем сколько 
+        оставшихся игроков имеют >= 2 типа.
         """
         if match.phase != MatchPhase.MAIN_TIME:
             return True
@@ -256,63 +256,56 @@ class BetTracker:
         if not team:
             return True
         
-        VALID_FORMATIONS = [
-            (4, 4, 2), (4, 3, 3), (3, 5, 2), (3, 4, 3),
-            (5, 3, 2), (5, 2, 3), (3, 3, 4),
-        ]
+        turn_number = match.current_turn.turn_number if match.current_turn else 1
+        turns_remaining = 11 - turn_number  # ходов ПОСЛЕ текущего
+        if turns_remaining <= 0:
+            return True
         
         used_ids = match.get_used_players(manager_id)
         
-        used_df = used_mf = used_fw = 0
-        for p in team.players:
-            if p.id in used_ids and p.position != Position.GOALKEEPER:
-                if p.position == Position.DEFENDER: used_df += 1
-                elif p.position == Position.MIDFIELDER: used_mf += 1
-                elif p.position == Position.FORWARD: used_fw += 1
+        # Бюджет ч/н ПОСЛЕ этой ставки
+        eo_after = self._count_even_odd_bets(match, manager_id) + 1
+        eo_budget = 6 - eo_after
         
-        avail_df = sum(1 for p in team.players if p.position == Position.DEFENDER and p.id not in used_ids and p.is_available)
-        avail_mf = sum(1 for p in team.players if p.position == Position.MIDFIELDER and p.id not in used_ids and p.is_available)
-        avail_fw = sum(1 for p in team.players if p.position == Position.FORWARD and p.id not in used_ids and p.is_available)
-        
-        # Бюджет ч/н ПОСЛЕ этой ставки (тратим 1)
-        even_odd_after = self._count_even_odd_bets(match, manager_id) + 1
-        even_odd_budget = 6 - even_odd_after
-        
-        # Голы по позициям
-        df_goals_used = 0
-        mf_goals_used = 0
+        # Голы по позициям (текущие)
+        df_goals = 0
+        mf_goals = 0
         for bet in match.bets:
             if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
                 bp = team.get_player_by_id(bet.player_id)
                 if bp:
-                    if bp.position == Position.DEFENDER: df_goals_used += 1
-                    elif bp.position == Position.MIDFIELDER: mf_goals_used += 1
+                    if bp.position == Position.DEFENDER: df_goals += 1
+                    elif bp.position == Position.MIDFIELDER: mf_goals += 1
         
-        for d, m, f in VALID_FORMATIONS:
-            if used_df > d or used_mf > m or used_fw > f:
+        # Считаем сколько оставшихся (без текущего) будут играбельными
+        playable = 0
+        for p in team.players:
+            if p.id in used_ids or not p.is_available or p.id == player.id:
+                continue
+            if p.position == Position.GOALKEEPER:
                 continue
             
-            need_df = d - used_df
-            need_mf = m - used_mf
-            need_fw = f - used_fw
+            # Считаем типы для этого игрока при новом бюджете ч/н
+            types = 0
+            # HIGH_LOW — всегда
+            types += 1
+            # EXACT_NUMBER — если квота есть
+            if p.position == Position.FORWARD:
+                fw_goals = sum(1 for b in match.bets if b.manager_id == manager_id and b.bet_type == BetType.EXACT_NUMBER and team.get_player_by_id(b.player_id) and team.get_player_by_id(b.player_id).position == Position.FORWARD)
+                if fw_goals < 4: types += 1
+            elif p.position == Position.DEFENDER:
+                if df_goals < 1: types += 1
+            elif p.position == Position.MIDFIELDER:
+                if mf_goals < 3: types += 1
+            # EVEN_ODD — если не FW и бюджет > 0
+            if p.position != Position.FORWARD and eo_budget > 0:
+                types += 1
             
-            if need_df > avail_df or need_mf > avail_mf or need_fw > avail_fw:
-                continue
-            
-            remaining_df_total = d - used_df
-            remaining_mf_total = m - used_mf
-            
-            df_can_skip = max(0, 1 - df_goals_used)
-            df_must_eo = max(0, remaining_df_total - df_can_skip)
-            
-            mf_can_skip = max(0, 3 - mf_goals_used)
-            mf_must_eo = max(0, remaining_mf_total - mf_can_skip)
-            
-            if df_must_eo + mf_must_eo <= even_odd_budget:
-                return True
+            if types >= 2:
+                playable += 1
         
-        return False
-    
+        return playable >= turns_remaining
+
     def _goal_safe_for_future(
         self,
         match: Match,
@@ -320,12 +313,10 @@ class BetTracker:
         player: Player
     ) -> bool:
         """
-        Проверить: если этот игрок поставит на гол, останется ли возможность
-        достичь хоть одной допустимой формации?
+        Если этот игрок поставит на гол, останется ли достаточно играбельных
+        игроков (с >= 2 типами ставок) на все будущие ходы?
         
-        Учитывает что если игрок DF/MF ставит на гол (пропуская ч/н),
-        это ОСВОБОЖДАЕТ 1 ч/н. А если он ставит гол + ч/н, тратит оба ресурса.
-        Проверяем ЛУЧШИЙ случай: гол без ч/н (экономия ч/н).
+        Симулируем: гол-квота позиции увеличивается на 1. Пересчитываем.
         """
         if match.phase != MatchPhase.MAIN_TIME:
             return True
@@ -334,63 +325,54 @@ class BetTracker:
         if not team:
             return True
         
-        VALID_FORMATIONS = [
-            (4, 4, 2), (4, 3, 3), (3, 5, 2), (3, 4, 3),
-            (5, 3, 2), (5, 2, 3), (3, 3, 4),
-        ]
+        turn_number = match.current_turn.turn_number if match.current_turn else 1
+        turns_remaining = 11 - turn_number
+        if turns_remaining <= 0:
+            return True
         
         used_ids = match.get_used_players(manager_id)
         
-        used_df = used_mf = used_fw = 0
-        for p in team.players:
-            if p.id in used_ids and p.position != Position.GOALKEEPER:
-                if p.position == Position.DEFENDER: used_df += 1
-                elif p.position == Position.MIDFIELDER: used_mf += 1
-                elif p.position == Position.FORWARD: used_fw += 1
+        eo_budget = 6 - self._count_even_odd_bets(match, manager_id)
         
-        avail_df = sum(1 for p in team.players if p.position == Position.DEFENDER and p.id not in used_ids and p.is_available)
-        avail_mf = sum(1 for p in team.players if p.position == Position.MIDFIELDER and p.id not in used_ids and p.is_available)
-        avail_fw = sum(1 for p in team.players if p.position == Position.FORWARD and p.id not in used_ids and p.is_available)
-        
-        even_odd_budget = 6 - self._count_even_odd_bets(match, manager_id)
-        
-        df_goals_used = 0
-        mf_goals_used = 0
+        # Голы по позициям ПОСЛЕ этой ставки
+        df_goals = 0
+        mf_goals = 0
+        fw_goals = 0
         for bet in match.bets:
             if bet.manager_id == manager_id and bet.bet_type == BetType.EXACT_NUMBER:
                 bp = team.get_player_by_id(bet.player_id)
                 if bp:
-                    if bp.position == Position.DEFENDER: df_goals_used += 1
-                    elif bp.position == Position.MIDFIELDER: mf_goals_used += 1
+                    if bp.position == Position.DEFENDER: df_goals += 1
+                    elif bp.position == Position.MIDFIELDER: mf_goals += 1
+                    elif bp.position == Position.FORWARD: fw_goals += 1
         
-        # Симулируем: этот игрок тратит 1 гол-квоту
-        sim_df_goals = df_goals_used + (1 if player.position == Position.DEFENDER else 0)
-        sim_mf_goals = mf_goals_used + (1 if player.position == Position.MIDFIELDER else 0)
+        # +1 гол для позиции текущего игрока
+        if player.position == Position.DEFENDER: df_goals += 1
+        elif player.position == Position.MIDFIELDER: mf_goals += 1
+        elif player.position == Position.FORWARD: fw_goals += 1
         
-        # Лучший случай: этот игрок НЕ тратит ч/н (гол + big_small)
-        # ч/н budget НЕ меняется
-        for d, m, f in VALID_FORMATIONS:
-            if used_df > d or used_mf > m or used_fw > f:
+        # Считаем играбельных
+        playable = 0
+        for p in team.players:
+            if p.id in used_ids or not p.is_available or p.id == player.id:
                 continue
-            need_df = d - used_df
-            need_mf = m - used_mf
-            need_fw = f - used_fw
-            if need_df > avail_df or need_mf > avail_mf or need_fw > avail_fw:
+            if p.position == Position.GOALKEEPER:
                 continue
             
-            remaining_df = d - used_df
-            remaining_mf = m - used_mf
+            types = 0
+            types += 1  # HIGH_LOW всегда
+            # EXACT_NUMBER
+            if p.position == Position.FORWARD and fw_goals < 4: types += 1
+            elif p.position == Position.DEFENDER and df_goals < 1: types += 1
+            elif p.position == Position.MIDFIELDER and mf_goals < 3: types += 1
+            # EVEN_ODD
+            if p.position != Position.FORWARD and eo_budget > 0:
+                types += 1
             
-            df_can_skip = max(0, 1 - sim_df_goals)
-            df_must_eo = max(0, remaining_df - df_can_skip)
-            
-            mf_can_skip = max(0, 3 - sim_mf_goals)
-            mf_must_eo = max(0, remaining_mf - mf_can_skip)
-            
-            if df_must_eo + mf_must_eo <= even_odd_budget:
-                return True
+            if types >= 2:
+                playable += 1
         
-        return False
+        return playable >= turns_remaining
 
     def get_available_bet_types(
         self,

@@ -251,6 +251,26 @@ class HybridStorage:
                 if last_match is None or (match.created_at and (last_match.created_at is None or match.created_at > last_match.created_at)):
                     last_match = match
         return last_match
+
+    def get_user_finished_matches(self, user_id: UUID, limit: int = 5) -> List[Match]:
+        """Получить последние завершённые матчи пользователя.
+
+        Сортируются по finished_at (или created_at если finished_at не заполнен)
+        в порядке убывания.
+        """
+        matches = []
+        for match in self.matches.values():
+            if (
+                match.status == MatchStatus.FINISHED
+                and match.is_participant(user_id)
+            ):
+                matches.append(match)
+
+        def _key(m: Match):
+            return m.finished_at or m.created_at or datetime.min.replace(tzinfo=timezone.utc)
+
+        matches.sort(key=_key, reverse=True)
+        return matches[:limit]
     
     def save_match(self, match: Match) -> None:
         """Сохранить матч в память + фоновое сохранение в БД"""

@@ -428,25 +428,12 @@ async def _auto_resolve_post_dice(engine, storage, match) -> None:
 
 
 def _update_user_stats_on_finish(storage, match) -> None:
-    """Обновить статистику пользователей при автоматическом завершении матча."""
-    if not match.result:
-        return
-    for mgr_id in [match.manager1_id, match.manager2_id]:
-        if mgr_id is None or mgr_id == BOT_USER_ID:
-            continue
-        u = storage.get_user_by_id(mgr_id)
-        if not u:
-            continue
-        u.matches_played += 1
-        if match.result.winner_id == mgr_id:
-            u.matches_won += 1
-            u.rating += 25
-        else:
-            u.rating = max(0, u.rating - 15)
-        try:
-            storage.update_user_stats(u)
-        except Exception:
-            pass
+    """Обновить рейтинг и статистику пользователей при автозавершении матча.
+
+    Использует ELO-логику из rating.py с защитой от двойного применения.
+    """
+    from src.platforms.telegram.rating import apply_match_rating
+    apply_match_rating(storage, match)
 
 
 async def _notify_timeout(bot, storage, match, turn_number, timed_out_managers, dice,

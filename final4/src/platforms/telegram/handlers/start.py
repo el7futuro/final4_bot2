@@ -137,25 +137,87 @@ async def cb_profile(callback: CallbackQuery):
         username=callback.from_user.full_name or "Игрок"
     )
     team = storage.get_user_team(user.id)
-    
+
+    win_pct = (
+        round(user.matches_won * 100 / user.matches_played)
+        if user.matches_played > 0 else 0
+    )
+
     text = (
         f"👤 <b>Профиль</b>\n\n"
         f"<b>{user.username}</b>\n\n"
-        f"📊 Рейтинг: {user.rating}\n"
+        f"📊 Рейтинг: <b>{user.rating}</b> (ELO)\n"
         f"⚽ Матчей: {user.matches_played}\n"
-        f"🏆 Побед: {user.matches_won}\n"
+        f"🏆 Побед: {user.matches_won} ({win_pct}%)\n"
     )
-    
+
     if team:
-        text += f"\n⚽ Команда: {team.name}"
-    
+        text += f"\n⚽ Команда: {team.name}\n"
+
+    # Последние 5 завершённых матчей
+    last_matches = storage.get_user_finished_matches(user.id, limit=5)
+    if last_matches:
+        text += "\n📜 <b>Последние 5 матчей:</b>\n"
+        for m in last_matches:
+            text += _format_match_summary_line(storage, m, user.id) + "\n"
+    else:
+        text += "\n<i>Завершённых матчей пока нет</i>\n"
+
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="« Назад", callback_data="main_menu")]
     ])
-    
+
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
+
+
+def _format_match_summary_line(storage, match, viewer_id) -> str:
+    """Одна строка сводки матча для профиля.
+
+    Формат: «✅ 25.04 vs Алексей — 3:1 (по пенальти)»
+    """
+    from src.core.engine.game_engine import BOT_USER_ID
+    from src.core.models.match import MatchPhase
+
+    is_m1 = match.manager1_id == viewer_id
+    opp_id = match.manager2_id if is_m1 else match.manager1_id
+
+    # Имя соперника
+    if opp_id == BOT_USER_ID:
+        opp_name = "Бот"
+    else:
+        opp_user = storage.get_user_by_id(opp_id) if opp_id else None
+        opp_name = opp_user.username if opp_user else "?"
+
+    # Результат
+    if not match.result or not match.result.winner_id:
+        emoji = "⚪"
+    elif match.result.winner_id == viewer_id:
+        emoji = "✅"
+    else:
+        emoji = "❌"
+
+    # Счёт «свой:соперника»
+    s1 = match.score.manager1_goals
+    s2 = match.score.manager2_goals
+    you = s1 if is_m1 else s2
+    them = s2 if is_m1 else s1
+
+    # Дата
+    date_src = match.finished_at or match.created_at
+    date_str = date_src.strftime("%d.%m") if date_src else "—"
+
+    # Признак завершения через ET / пенальти
+    suffix = ""
+    if match.result and match.result.decided_by == MatchPhase.PENALTIES:
+        vp = match.penalty_score_m1 if is_m1 else match.penalty_score_m2
+        op = match.penalty_score_m2 if is_m1 else match.penalty_score_m1
+        suffix = f" (пен. {vp}:{op})"
+    elif match.result and match.result.decided_by == MatchPhase.EXTRA_TIME:
+        suffix = " (ОТ)"
+
+    return f"{emoji} {date_str} vs {opp_name} — {you}:{them}{suffix}"
 
 
 @router.callback_query(F.data == "leaderboard")

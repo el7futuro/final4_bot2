@@ -167,6 +167,7 @@ class Match(BaseModel):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     platform: str = Field(default="telegram")
+    rating_applied: bool = Field(default=False)  # Флаг идемпотентности обновления рейтинга
 
     def is_manager_turn(self, manager_id: UUID) -> bool:
         """Проверить, ход ли этого менеджера"""

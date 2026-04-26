@@ -1453,17 +1453,10 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
         renderer = MatchRenderer()
         result_text = renderer.render_match_result(match, user.id)
         
-        # Обновляем статистику пользователя
+        # Обновляем рейтинг (ELO) — идемпотентно, для обоих участников
         if match.result:
-            user_obj = storage.get_user_by_id(user.id)
-            if user_obj:
-                user_obj.matches_played += 1
-                if match.result.winner_id == user.id:
-                    user_obj.matches_won += 1
-                    user_obj.rating += 25
-                else:
-                    user_obj.rating = max(0, user_obj.rating - 15)
-                storage.update_user_stats(user_obj)
+            from src.platforms.telegram.rating import apply_match_rating
+            apply_match_rating(storage, match)
         
         # Сохраняем match_id в состоянии для доступа к истории/статистике
         await state.update_data(match_id=str(match.id))
@@ -1492,7 +1485,11 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
         # Автоматические пенальти
         match = _auto_penalties(storage, match)
         storage.save_match(match)
-        
+
+        # Обновляем рейтинг
+        from src.platforms.telegram.rating import apply_match_rating
+        apply_match_rating(storage, match)
+
         renderer = MatchRenderer()
         result_text = renderer.render_match_result(match, user.id)
         
@@ -1509,6 +1506,10 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
     
     elif match.status == MatchStatus.FINISHED:
         # Матч завершён
+        # Обновляем рейтинг (на случай если первая ветка FINISHED не сработала)
+        from src.platforms.telegram.rating import apply_match_rating
+        apply_match_rating(storage, match)
+
         renderer = MatchRenderer()
         result_text = renderer.render_match_result(match, user.id)
         

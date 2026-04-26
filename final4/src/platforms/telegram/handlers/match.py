@@ -114,6 +114,10 @@ async def _join_existing_match(callback: CallbackQuery, state: FSMContext, user,
     
     # start_match уже вызывается внутри set_team_without_formation когда обе команды готовы
     storage.save_match(match)
+
+    # Таймер 60 сек на ход (PvP — оба игрока)
+    from src.platforms.telegram.turn_timer import arm_turn_timer
+    arm_turn_timer(callback.bot, storage, match)
     
     # Сохраняем состояние для второго игрока
     await state.update_data(match_id=str(match.id))
@@ -195,6 +199,9 @@ async def cb_cancel_search(callback: CallbackQuery, state: FSMContext):
         if match:
             match.status = MatchStatus.CANCELLED
             storage.save_match(match)
+        # Отменяем таймеры этого матча на всякий случай
+        from src.platforms.telegram.turn_timer import cancel_match_timers
+        cancel_match_timers(UUID(match_id))
     
     await state.clear()
     await callback.message.edit_text(
@@ -248,6 +255,10 @@ async def cb_play_bot(callback: CallbackQuery, state: FSMContext):
     match = storage.engine.set_team_without_formation(match, BOT_USER_ID, bot_team)
     
     storage.save_match(match)
+
+    # Таймер 60 сек на ход
+    from src.platforms.telegram.turn_timer import arm_turn_timer
+    arm_turn_timer(callback.bot, storage, match)
     
     await state.update_data(match_id=str(match.id))
     await state.set_state(MatchStates.in_game)

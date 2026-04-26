@@ -1403,6 +1403,13 @@ async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, us
     except ValueError as e:
         await callback.answer(str(e), show_alert=True)
         return
+
+    # Управление таймером хода (60 сек)
+    from src.platforms.telegram.turn_timer import arm_turn_timer, cancel_match_timers
+    if match.status == MatchStatus.FINISHED:
+        cancel_match_timers(match.id)
+    elif match.status in (MatchStatus.IN_PROGRESS, MatchStatus.EXTRA_TIME) and match.current_turn:
+        arm_turn_timer(callback.bot, storage, match)
     
     # Проверяем статус матча
     if match.status == MatchStatus.FINISHED:

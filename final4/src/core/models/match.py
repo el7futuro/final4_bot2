@@ -43,6 +43,9 @@ class TurnState(BaseModel):
     """
     turn_number: int = Field(ge=1)
     
+    # Дедлайн хода (для авто-ставок при таймауте). Устанавливается слоем платформы.
+    turn_deadline_at: Optional[datetime] = Field(default=None)
+    
     # Ставки обоих игроков (ключ = manager_id как строка)
     # Каждый игрок делает 2 ставки на одного своего игрока (кроме хода 1 - вратарь 1 ставка)
     manager1_player_id: Optional[UUID] = None  # На кого ставит менеджер 1

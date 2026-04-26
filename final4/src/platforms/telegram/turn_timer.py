@@ -267,8 +267,48 @@ async def _execute_timeout(bot, storage, match_id: UUID, turn_number: int):
     elif match.current_turn:
         dice = match.current_turn.dice_value
 
+    # Автоматический переход к следующему ходу (если кубик брошен и пост-эффекты разрешены)
+    auto_ended = False
+    if (
+        match.current_turn
+        and match.current_turn.dice_rolled
+        and not match.current_turn.waiting_for_yellow_card_choice
+        and not match.current_turn.waiting_for_penalty_roll
+    ):
+        try:
+            match = engine.end_turn(match)
+            storage.save_match(match)
+            auto_ended = True
+        except Exception as e:
+            logger.exception(f"[TIMER] end_turn failed: {e}")
+
+    # Обработка состояний после end_turn: пенальти/финиш/новый ход
+    new_turn_started = False
+    finished = False
+    if auto_ended:
+        if match.status == MatchStatus.PENALTIES:
+            # Авто-серия пенальти
+            try:
+                from src.platforms.telegram.handlers.game import _auto_penalties
+                match = _auto_penalties(storage, match)
+                storage.save_match(match)
+            except Exception as e:
+                logger.exception(f"[TIMER] auto_penalties failed: {e}")
+        if match.status == MatchStatus.FINISHED:
+            finished = True
+            # Обновляем статистику пользователей
+            _update_user_stats_on_finish(storage, match)
+            cancel_match_timers(match.id)
+        elif match.status in (MatchStatus.IN_PROGRESS, MatchStatus.EXTRA_TIME) and match.current_turn:
+            # Стартует новый ход — armим новый таймер (это перепланирует и тикер)
+            arm_turn_timer(bot, storage, match)
+            new_turn_started = True
+
     # Уведомляем участников
-    await _notify_timeout(bot, storage, match, turn_number, timed_out_managers, dice)
+    await _notify_timeout(
+        bot, storage, match, turn_number, timed_out_managers, dice,
+        new_turn_started=new_turn_started, finished=finished,
+    )
 
 
 def _auto_random_bets_for_manager(engine, match, manager_id: UUID) -> None:
@@ -387,18 +427,46 @@ async def _auto_resolve_post_dice(engine, storage, match) -> None:
     storage.save_match(match)
 
 
-async def _notify_timeout(bot, storage, match, turn_number, timed_out_managers, dice):
+def _update_user_stats_on_finish(storage, match) -> None:
+    """Обновить статистику пользователей при автоматическом завершении матча."""
+    if not match.result:
+        return
+    for mgr_id in [match.manager1_id, match.manager2_id]:
+        if mgr_id is None or mgr_id == BOT_USER_ID:
+            continue
+        u = storage.get_user_by_id(mgr_id)
+        if not u:
+            continue
+        u.matches_played += 1
+        if match.result.winner_id == mgr_id:
+            u.matches_won += 1
+            u.rating += 25
+        else:
+            u.rating = max(0, u.rating - 15)
+        try:
+            storage.update_user_stats(u)
+        except Exception:
+            pass
+
+
+async def _notify_timeout(bot, storage, match, turn_number, timed_out_managers, dice,
+                           new_turn_started: bool = False, finished: bool = False):
     """Уведомить участников о таймауте и текущем состоянии."""
     from src.platforms.telegram.keyboards.inline import Keyboards
 
     text_base = (
-        f"⏱ <b>Время вышло (60 сек)!</b>\n\n"
+        f"⏱ <b>Время хода #{turn_number} вышло (60 сек)!</b>\n\n"
         f"Ставки сделаны автоматически за тех, кто не успел.\n"
     )
     if dice is not None:
         text_base += f"🎲 Кубик брошен: <b>{dice}</b>\n"
 
-    # Получаем telegram_id участников
+    if finished:
+        text_base += "\n🏁 <b>Матч завершён!</b>\n"
+    elif new_turn_started:
+        next_turn = match.current_turn.turn_number if match.current_turn else turn_number + 1
+        text_base += f"\n➡️ Переход к ходу #{next_turn}.\n"
+
     for mgr_id in [match.manager1_id, match.manager2_id]:
         if mgr_id is None or mgr_id == BOT_USER_ID:
             continue
@@ -412,7 +480,6 @@ async def _notify_timeout(bot, storage, match, turn_number, timed_out_managers, 
                 if you_timed_out
                 else "ℹ️ Соперник не успел подтвердить ставки.\n"
             )
-            text += f"\nХод #{turn_number}."
             await bot.send_message(
                 chat_id=user.telegram_id,
                 text=text,

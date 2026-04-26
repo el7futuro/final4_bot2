@@ -29,6 +29,10 @@ class TurnTimerManager:
 
     def __init__(self):
         self._tasks: Dict[Tuple[UUID, int], asyncio.Task] = {}
+        self._tickers: Dict[Tuple[UUID, int], asyncio.Task] = {}
+        # (match_id, telegram_id) -> message_id таймер-сообщения
+        self._timer_messages: Dict[Tuple[UUID, int], int] = {}
+        self._bot = None
 
     def cancel(self, match_id: UUID, turn_number: Optional[int] = None) -> None:
         """Отменить таймер. Если turn_number=None — отменить все таймеры этого матча."""
@@ -43,18 +47,59 @@ class TurnTimerManager:
         for k in keys_to_remove:
             self._tasks.pop(k, None)
 
+        # Также отменяем тикеры
+        ticker_keys = []
+        for key in list(self._tickers.keys()):
+            mid, tn = key
+            if mid == match_id and (turn_number is None or tn == turn_number):
+                t = self._tickers[key]
+                if not t.done():
+                    t.cancel()
+                ticker_keys.append(key)
+        for k in ticker_keys:
+            self._tickers.pop(k, None)
+
+        # И запускаем удаление таймер-сообщений из чатов
+        if self._bot is not None:
+            asyncio.create_task(self._delete_timer_messages(match_id))
+
+    async def _delete_timer_messages(self, match_id: UUID) -> None:
+        """Удалить таймер-сообщения у участников этого матча."""
+        keys = [k for k in self._timer_messages.keys() if k[0] == match_id]
+        for key in keys:
+            _, telegram_id = key
+            msg_id = self._timer_messages.pop(key, None)
+            if not msg_id or self._bot is None:
+                continue
+            try:
+                await self._bot.delete_message(chat_id=telegram_id, message_id=msg_id)
+            except Exception:
+                pass
+
     def schedule(self, bot, storage, match_id: UUID, turn_number: int) -> None:
-        """Запланировать таймер на текущий ход. Перезапишет существующий для этой пары."""
-        # Отменяем старый, если был
-        self.cancel(match_id, turn_number)
+        """Запланировать таймер на текущий ход. Перезапишет существующий."""
+        self._bot = bot
+        # Отменяем старые таймеры/тикеры этого матча (новый ход → всё сбрасывается)
+        self.cancel(match_id)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return  # Не в async контексте — не создаём
+            return
         task = loop.create_task(
             _turn_timeout_task(bot, storage, match_id, turn_number)
         )
         self._tasks[(match_id, turn_number)] = task
+        # Запускаем тикер
+        ticker = loop.create_task(
+            _ticker_task(bot, storage, match_id, turn_number)
+        )
+        self._tickers[(match_id, turn_number)] = ticker
+
+    def get_timer_message_id(self, match_id: UUID, telegram_id: int) -> Optional[int]:
+        return self._timer_messages.get((match_id, telegram_id))
+
+    def set_timer_message_id(self, match_id: UUID, telegram_id: int, msg_id: int) -> None:
+        self._timer_messages[(match_id, telegram_id)] = msg_id
 
 
 _manager: Optional[TurnTimerManager] = None
@@ -102,6 +147,61 @@ async def _turn_timeout_task(bot, storage, match_id: UUID, turn_number: int):
         logger.exception(f"[TIMER] Timeout handler failed for match {match_id} turn {turn_number}: {e}")
 
 
+async def _ticker_task(bot, storage, match_id: UUID, turn_number: int):
+    """Живой обратный отсчёт: отдельное сообщение, тикающее каждые 15 сек."""
+    mgr = get_timer_manager()
+    # Получаем актуальный матч и список участников-людей
+    match = storage.get_match(match_id)
+    if not match:
+        return
+    participants = []
+    for uid in [match.manager1_id, match.manager2_id]:
+        if uid is None or uid == BOT_USER_ID:
+            continue
+        u = storage.get_user_by_id(uid)
+        if u and u.telegram_id:
+            participants.append((uid, u.telegram_id))
+
+    # Шаг 1: отправляем стартовое сообщение
+    initial_text = _format_timer_text(turn_number, TURN_TIMEOUT_SECONDS)
+    for _uid, tg_id in participants:
+        try:
+            msg = await bot.send_message(chat_id=tg_id, text=initial_text)
+            mgr.set_timer_message_id(match_id, tg_id, msg.message_id)
+        except Exception as e:
+            logger.warning(f"[TIMER] Failed to send timer message to {tg_id}: {e}")
+
+    # Шаг 2: тикаем каждые 15 сек
+    for remaining in (45, 30, 15):
+        try:
+            await asyncio.sleep(15)
+        except asyncio.CancelledError:
+            return
+        text = _format_timer_text(turn_number, remaining)
+        for _uid, tg_id in participants:
+            msg_id = mgr.get_timer_message_id(match_id, tg_id)
+            if not msg_id:
+                continue
+            try:
+                await bot.edit_message_text(
+                    chat_id=tg_id, message_id=msg_id, text=text
+                )
+            except Exception:
+                # Сообщение могли удалить, или текст тот же — игнорируем
+                pass
+
+
+def _format_timer_text(turn_number: int, remaining_seconds: int) -> str:
+    """Текст таймер-сообщения."""
+    if remaining_seconds <= 5:
+        emoji = "🚨"
+    elif remaining_seconds <= 15:
+        emoji = "⚠️"
+    else:
+        emoji = "⏱"
+    return f"{emoji} <b>Ход #{turn_number} — осталось {remaining_seconds} сек</b>"
+
+
 async def _execute_timeout(bot, storage, match_id: UUID, turn_number: int):
     """Выполнить автоставки и продолжить ход."""
     match = storage.get_match(match_id)
@@ -121,25 +221,23 @@ async def _execute_timeout(bot, storage, match_id: UUID, turn_number: int):
     if (
         not match.current_turn.manager2_ready
         and match.manager2_id is not None
-        and match.manager2_id != BOT_USER_ID  # бот сам себе автоставит
+        and match.manager2_id != BOT_USER_ID
     ):
         timed_out_managers.append(match.manager2_id)
 
-    if not timed_out_managers:
-        return  # Уже всё готово
+    logger.info(
+        f"[TIMER] Turn {turn_number} timeout — auto-betting for "
+        f"{len(timed_out_managers)} manager(s); dice_rolled={match.current_turn.dice_rolled}"
+    )
 
-    logger.info(f"[TIMER] Turn {turn_number} timeout — auto-betting for {len(timed_out_managers)} manager(s)")
-
-    # Автоставки за просрочивших (та же логика, что у бота)
+    # Автоставки за просрочивших
     for mgr_id in timed_out_managers:
         try:
             _auto_random_bets_for_manager(engine, match, mgr_id)
         except Exception as e:
             logger.exception(f"[TIMER] Auto-bets failed for {mgr_id}: {e}")
 
-    # Если соперник — vs_bot и бот ещё не сделал ставки, его автоставит штатная логика
-    # после нашего confirm_bets (там есть проверка `match_type == vs_bot` в cb_confirm_bets,
-    # но мы не в callback'е, поэтому продублируем здесь).
+    # Если оппонент-бот ещё не сделал ставки — делаем за него
     from src.platforms.telegram.handlers.game import _bot_make_bets
     if (
         match.match_type.value == "vs_bot"
@@ -153,20 +251,21 @@ async def _execute_timeout(bot, storage, match_id: UUID, turn_number: int):
 
     storage.save_match(match)
 
-    # Бросаем кубик автоматически (только если оба готовы)
-    can_roll, _ = engine.can_roll_dice(match)
-    if can_roll:
-        try:
-            match, dice, _won = engine.roll_dice(match)
-        except Exception as e:
-            logger.exception(f"[TIMER] roll_dice failed: {e}")
-            dice = None
-        else:
-            storage.save_match(match)
-            # Резолвим жёлтую карточку (выбор атакуемой статы) и пенальти автоматически
-            await _auto_resolve_post_dice(engine, storage, match)
-    else:
-        dice = None
+    # Бросаем кубик автоматически (если оба готовы и кубик ещё не брошен)
+    dice = None
+    if match.current_turn and not match.current_turn.dice_rolled:
+        can_roll, _ = engine.can_roll_dice(match)
+        if can_roll:
+            try:
+                match, dice, _won = engine.roll_dice(match)
+            except Exception as e:
+                logger.exception(f"[TIMER] roll_dice failed: {e}")
+            else:
+                storage.save_match(match)
+                # Резолвим жёлтую карточку и пенальти автоматически
+                await _auto_resolve_post_dice(engine, storage, match)
+    elif match.current_turn:
+        dice = match.current_turn.dice_value
 
     # Уведомляем участников
     await _notify_timeout(bot, storage, match, turn_number, timed_out_managers, dice)

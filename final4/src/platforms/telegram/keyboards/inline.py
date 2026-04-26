@@ -37,9 +37,13 @@ class Keyboards:
         return builder.as_markup()
 
     @staticmethod
-    def main_menu() -> InlineKeyboardMarkup:
-        """Главное меню"""
+    def main_menu(has_active_match: bool = False) -> InlineKeyboardMarkup:
+        """Главное меню. Если есть активный матч — добавляется кнопка возврата."""
         builder = InlineKeyboardBuilder()
+        if has_active_match:
+            builder.row(
+                InlineKeyboardButton(text="▶️ Продолжить матч", callback_data="open_match")
+            )
         builder.row(
             InlineKeyboardButton(text="⚽ Играть", callback_data="play_menu")
         )
@@ -58,9 +62,6 @@ class Keyboards:
         builder = InlineKeyboardBuilder()
         builder.row(
             InlineKeyboardButton(text="🎮 Открыть матч", callback_data="open_match")
-        )
-        builder.row(
-            InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")
         )
         return builder.as_markup()
     

@@ -12,6 +12,14 @@ from ..storage import get_storage
 router = Router(name="start")
 
 
+def _has_active_match(storage, user_id) -> bool:
+    """Есть ли у пользователя активный матч (для кнопки 'Продолжить матч')."""
+    try:
+        return storage.get_user_active_match(user_id) is not None
+    except Exception:
+        return False
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     """Обработка команды /start"""
@@ -32,16 +40,21 @@ async def cmd_start(message: Message, state: FSMContext):
         f"🏆 Побед: {user.matches_won} из {user.matches_played}"
     )
     
-    await message.answer(text, reply_markup=Keyboards.main_menu())
+    await message.answer(text, reply_markup=Keyboards.main_menu(
+        has_active_match=_has_active_match(storage, user.id)
+    ))
 
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message, state: FSMContext):
     """Команда /menu"""
     await state.clear()
+    storage = get_storage()
+    user = storage.get_user_by_telegram_id(message.from_user.id)
+    has_active = _has_active_match(storage, user.id) if user else False
     await message.answer(
         "⚽ <b>Главное меню</b>",
-        reply_markup=Keyboards.main_menu()
+        reply_markup=Keyboards.main_menu(has_active_match=has_active)
     )
 
 
@@ -49,9 +62,12 @@ async def cmd_menu(message: Message, state: FSMContext):
 async def cb_main_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню"""
     await state.clear()
+    storage = get_storage()
+    user = storage.get_user_by_telegram_id(callback.from_user.id)
+    has_active = _has_active_match(storage, user.id) if user else False
     await callback.message.edit_text(
         "⚽ <b>Главное меню</b>",
-        reply_markup=Keyboards.main_menu()
+        reply_markup=Keyboards.main_menu(has_active_match=has_active)
     )
     await callback.answer()
 

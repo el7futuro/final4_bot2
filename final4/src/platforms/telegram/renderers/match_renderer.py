@@ -524,19 +524,6 @@ class MatchRenderer:
                 lines.append("✅ Ваши ставки подтверждены")
                 if not opp_ready:
                     lines.append("⏳ Ожидаем соперника...")
-
-            # Дедлайн хода (60 сек)
-            if turn.turn_deadline_at:
-                from datetime import datetime, timezone
-                now = datetime.now(timezone.utc)
-                deadline = turn.turn_deadline_at
-                if deadline.tzinfo is None:
-                    deadline = deadline.replace(tzinfo=timezone.utc)
-                remaining = int((deadline - now).total_seconds())
-                if remaining > 0:
-                    lines.append(f"⏱ <i>Осталось ~{remaining} сек на ход</i>")
-                else:
-                    lines.append("⏱ <i>Время хода истекает...</i>")
         else:
             lines.append("🎲 Кубик брошен!")
         

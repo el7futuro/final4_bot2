@@ -173,19 +173,46 @@ async def _execute_timeout(bot, storage, match_id: UUID, turn_number: int):
 
 
 def _auto_random_bets_for_manager(engine, match, manager_id: UUID) -> None:
-    """Случайные ставки за конкретного менеджера (используется при таймауте)."""
-    available = engine.get_available_players(match, manager_id)
-    if not available:
-        # Подтвердить ставки нельзя без игроков — пропускаем; ход останется висеть,
-        # но это аномальная ситуация (combo-валидатор не должен её допускать).
+    """Случайные ставки за конкретного менеджера (используется при таймауте).
+
+    Учитывает уже сделанный пользователем выбор:
+    - Если пользователь уже залочил игрока в этом ходу — используем ЭТОГО игрока
+      и доставляем недостающие ставки на него же (его частичный прогресс
+      сохраняется).
+    - Если игрок ещё не выбран — выбираем случайного из доступных.
+    """
+    turn = match.current_turn
+    if not turn:
         return
-    player = random.choice(available)
-    turn_num = match.current_turn.turn_number if match.current_turn else 1
+
+    is_m1 = manager_id == match.manager1_id
+    locked_player_id = turn.manager1_player_id if is_m1 else turn.manager2_player_id
+    existing_bets = list(turn.manager1_bets if is_m1 else turn.manager2_bets)
+
+    turn_num = turn.turn_number
     required_bets = (
         2 if match.phase == MatchPhase.EXTRA_TIME else (1 if turn_num == 1 else 2)
     )
 
-    for _ in range(required_bets):
+    # Выбираем игрока (или используем уже залоченного)
+    if locked_player_id:
+        team = match.get_team(manager_id)
+        player = team.get_player_by_id(locked_player_id) if team else None
+        if not player:
+            logger.warning(
+                f"[TIMER] Locked player {locked_player_id} not found for {manager_id}"
+            )
+            return
+    else:
+        available = engine.get_available_players(match, manager_id)
+        if not available:
+            logger.warning(f"[TIMER] No available players for {manager_id}")
+            return
+        player = random.choice(available)
+
+    # Доставляем недостающие ставки на этого игрока
+    bets_to_place = max(0, required_bets - len(existing_bets))
+    for _ in range(bets_to_place):
         types = engine.get_available_bet_types(match, manager_id, player.id)
         if not types:
             break
@@ -263,6 +290,8 @@ async def _auto_resolve_post_dice(engine, storage, match) -> None:
 
 async def _notify_timeout(bot, storage, match, turn_number, timed_out_managers, dice):
     """Уведомить участников о таймауте и текущем состоянии."""
+    from src.platforms.telegram.keyboards.inline import Keyboards
+
     text_base = (
         f"⏱ <b>Время вышло (60 сек)!</b>\n\n"
         f"Ставки сделаны автоматически за тех, кто не успел.\n"
@@ -284,7 +313,11 @@ async def _notify_timeout(bot, storage, match, turn_number, timed_out_managers, 
                 if you_timed_out
                 else "ℹ️ Соперник не успел подтвердить ставки.\n"
             )
-            text += f"\nХод #{turn_number}. Откройте матч, чтобы продолжить."
-            await bot.send_message(chat_id=user.telegram_id, text=text)
+            text += f"\nХод #{turn_number}."
+            await bot.send_message(
+                chat_id=user.telegram_id,
+                text=text,
+                reply_markup=Keyboards.timeout_notice(),
+            )
         except Exception as e:
             logger.warning(f"[TIMER] Failed to notify {mgr_id}: {e}")

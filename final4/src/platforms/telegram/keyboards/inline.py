@@ -51,6 +51,18 @@ class Keyboards:
             InlineKeyboardButton(text="❓ Правила", callback_data="rules")
         )
         return builder.as_markup()
+
+    @staticmethod
+    def timeout_notice() -> InlineKeyboardMarkup:
+        """Клавиатура для уведомления о таймауте: вернуться к матчу"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="🎮 Открыть матч", callback_data="open_match")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")
+        )
+        return builder.as_markup()
     
     @staticmethod
     def play_menu() -> InlineKeyboardMarkup:

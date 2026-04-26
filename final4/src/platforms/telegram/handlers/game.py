@@ -133,6 +133,43 @@ async def cb_back_to_game(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "open_match")
+async def cb_open_match(callback: CallbackQuery, state: FSMContext):
+    """Открыть текущий/последний матч (используется из уведомлений о таймауте)."""
+    storage = get_storage()
+    user = storage.get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.full_name or "Игрок",
+    )
+
+    # Сначала ищем активный матч, потом — последний завершённый
+    match = storage.get_user_active_match(user.id) or storage.get_user_last_match(user.id)
+    if not match:
+        await callback.message.edit_text(
+            "❌ Матч не найден",
+            reply_markup=Keyboards.main_menu(),
+        )
+        await callback.answer()
+        return
+
+    await state.update_data(match_id=str(match.id))
+
+    if match.status == MatchStatus.FINISHED:
+        # Завершённый — показываем результат
+        renderer = MatchRenderer()
+        result_text = renderer.render_match_result(match, user.id)
+        await state.set_state(None)
+        await callback.message.edit_text(
+            result_text,
+            reply_markup=Keyboards.match_finished_menu(),
+        )
+    else:
+        # Активный — рендерим игровой экран
+        await state.set_state(MatchStates.in_game)
+        await _render_game_screen(callback, state)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "match_stats")
 async def cb_match_stats(callback: CallbackQuery, state: FSMContext):
     """Показать статистику матча"""

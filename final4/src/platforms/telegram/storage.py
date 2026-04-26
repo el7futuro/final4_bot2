@@ -126,6 +126,26 @@ class HybridStorage:
                     self.matches[match.id] = match
                     if match.status == MatchStatus.WAITING_FOR_OPPONENT:
                         self.waiting_matches.append(match.id)
+
+                # Загружаем последние завершённые матчи каждого пользователя,
+                # чтобы кнопка "История" работала после перезапуска бота.
+                # Берём последние 100 finished матчей по created_at.
+                from sqlalchemy import desc
+                result = await session.execute(
+                    select(MatchModel)
+                    .where(MatchModel.status == 'finished')
+                    .order_by(desc(MatchModel.created_at))
+                    .limit(100)
+                )
+                for model in result.scalars().all():
+                    if model.id not in self.matches:
+                        try:
+                            match = repo._to_domain(model)
+                            self.matches[match.id] = match
+                        except Exception as e:
+                            logger.warning(
+                                f"[DB] Failed to load finished match {model.id}: {e}"
+                            )
                 
                 # Загружаем команды
                 from src.infrastructure.db.models import TeamModel

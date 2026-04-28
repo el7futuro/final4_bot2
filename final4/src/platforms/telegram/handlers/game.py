@@ -972,15 +972,25 @@ async def cb_roll_dice(callback: CallbackQuery, state: FSMContext):
 async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, user):
     """Основная логика броска кубика"""
     storage = get_storage()
-    
-    # Проверяем, не брошен ли уже кубик
+
+    # Tolerance: кубик уже брошен (соперником или таймером) — обновляем экран
     if match.current_turn and match.current_turn.dice_rolled:
-        await callback.answer("Кубик уже брошен!", show_alert=True)
+        await state.set_state(MatchStates.in_game)
+        await _render_game_screen(callback, state)
+        await callback.answer("Кубик уже брошен")
         return
-    
+
     # Бросаем кубик
-    match, dice_value, won_bets = storage.engine.roll_dice(match)
-    storage.save_match(match)
+    try:
+        match, dice_value, won_bets = storage.engine.roll_dice(match)
+        storage.save_match(match)
+    except ValueError as e:
+        # Гонка с таймером — обновляем экран
+        logger.warning(f"[BOT] roll_dice failed (likely timer race): {e}")
+        await state.set_state(MatchStates.in_game)
+        await _render_game_screen(callback, state)
+        await callback.answer()
+        return
     
     renderer = MatchRenderer()
     
@@ -1428,17 +1438,43 @@ async def cb_end_turn(callback: CallbackQuery, state: FSMContext):
 async def _handle_end_turn(callback: CallbackQuery, state: FSMContext, match, user):
     """Основная логика завершения хода"""
     storage = get_storage()
-    
+
+    # Tolerance: ход уже завершён автоматически (таймер) или соперником —
+    # просто рендерим актуальный экран без ошибки
+    if not match.current_turn or not match.current_turn.dice_rolled or match.status == MatchStatus.FINISHED:
+        # Матч закончен или ход уже завершён до нас
+        if match.status == MatchStatus.FINISHED:
+            renderer = MatchRenderer()
+            result_text = renderer.render_match_result(match, user.id)
+            await state.update_data(match_id=str(match.id))
+            await state.set_state(None)
+            await callback.message.edit_text(
+                result_text,
+                reply_markup=Keyboards.match_finished_menu()
+            )
+            await callback.answer()
+            return
+        else:
+            # Активный матч, но текущий ход уже не на той стадии
+            await state.set_state(MatchStates.in_game)
+            await _render_game_screen(callback, state)
+            await callback.answer("Ход уже завершён автоматически")
+            return
+
     # В PvP только manager1 завершает ход
     if match.match_type.value == "random" and user.id != match.manager1_id:
         await callback.answer("Ожидайте, пока соперник завершит ход", show_alert=True)
         return
-    
+
     try:
         match = storage.engine.end_turn(match)
         storage.save_match(match)
     except ValueError as e:
-        await callback.answer(str(e), show_alert=True)
+        # Если ошибка — возможно гонка с таймером, попробуем перерендерить
+        logger.warning(f"[BOT] end_turn failed (likely timer race): {e}")
+        await state.set_state(MatchStates.in_game)
+        await _render_game_screen(callback, state)
+        await callback.answer()
         return
 
     # Управление таймером хода (60 сек)

@@ -1055,13 +1055,20 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
     if match.current_turn and match.current_turn.waiting_for_yellow_card_choice:
         from src.core.engine.game_engine import BOT_USER_ID
         
-        target_mgr = match.current_turn.yellow_card_target_manager_id
-        target_pid = match.current_turn.yellow_card_target_player_id
+        target_mgr = match.current_turn.yellow_card_target_manager_id  # КТО ВЫБИРАЕТ (соперник владельца)
+        target_pid = match.current_turn.yellow_card_target_player_id  # игрок к которому применяется
         
         if target_mgr and target_pid:
-            # Находим целевого игрока и его доступные действия
-            target_team = match.get_team(target_mgr)
-            target_player = target_team.get_player_by_id(target_pid) if target_team else None
+            # Находим целевого игрока в любой из команд (он принадлежит НЕ выбирающему)
+            target_player = None
+            owner_mgr_id = None
+            for t in [match.team1, match.team2]:
+                if t:
+                    p = t.get_player_by_id(target_pid)
+                    if p:
+                        target_player = p
+                        owner_mgr_id = t.manager_id
+                        break
             
             if target_player:
                 has_goals = target_player.stats.goals > 0
@@ -1075,9 +1082,9 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
                     match.current_turn.yellow_card_target_player_id = None
                     match.current_turn.yellow_card_id = None
                     storage.save_match(match)
-                    text += "\n\n🟡 <b>Предупреждение!</b> У игрока нет действий — карточка не повлияла."
+                    text += f"\n\n🟡 <b>Предупреждение!</b> У игрока {target_player.name} нет действий — карточка не повлияла."
                 elif target_mgr == BOT_USER_ID:
-                    # Бот выбирает автоматически (наименее ценное: отбитие > передача > гол)
+                    # Бот-выбирающий: убирает наименее ценное (отбитие > передача > гол)
                     if has_saves:
                         bot_action = "save"
                     elif has_passes:
@@ -1087,10 +1094,14 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
                     match = storage.engine.resolve_yellow_card(match, BOT_USER_ID, bot_action)
                     storage.save_match(match)
                     action_names = {"save": "отбитие", "pass": "передачу", "goal": "гол"}
-                    text += f"\n\n🟡 <b>Предупреждение!</b> Бот потерял {action_names[bot_action]}."
+                    text += f"\n\n🟡 <b>Предупреждение!</b> Бот убрал у {target_player.name} {action_names[bot_action]}."
                 elif target_mgr == user.id:
-                    # Предупреждение СВОЕМУ игроку — показываем выбор
-                    text += f"\n\n🟡 <b>ПРЕДУПРЕЖДЕНИЕ!</b>\nВаш игрок <b>{target_player.name}</b> получил жёлтую карточку.\nВыберите, какое действие потерять:"
+                    # Я — выбирающий (соперник владельца игрока). Игрок чужой.
+                    text += (
+                        f"\n\n🟡 <b>ПРЕДУПРЕЖДЕНИЕ!</b>\n"
+                        f"Игрок соперника <b>{target_player.name}</b> получил жёлтую карточку.\n"
+                        f"Выберите, какое действие убрать:"
+                    )
                     
                     await state.set_state(MatchStates.yellow_card_choice)
                     await callback.message.edit_text(
@@ -1100,12 +1111,16 @@ async def _handle_roll_dice(callback: CallbackQuery, state: FSMContext, match, u
                     await callback.answer("🟡 Предупреждение!")
                     return
                 else:
-                    # PvP — нужно отправить выбор СОПЕРНИКУ
+                    # PvP — выбор у соперника, отправим ему уведомление
                     if match.match_type.value == "random":
                         await _notify_yellow_card_owner_with_choice(callback.bot, match, target_mgr)
-                        text += f"\n\n🟡 <b>ПРЕДУПРЕЖДЕНИЕ СОПЕРНИКА!</b>\n⏳ Ожидаем выбор соперника..."
+                        text += (
+                            f"\n\n🟡 <b>ПРЕДУПРЕЖДЕНИЕ!</b>\n"
+                            f"Ваш игрок <b>{target_player.name}</b> получил жёлтую карточку.\n"
+                            f"⏳ Соперник выбирает, какое действие убрать..."
+                        )
                         await callback.message.edit_text(text, reply_markup=None)
-                        await callback.answer("🟡 Предупреждение соперника!")
+                        await callback.answer("🟡 Предупреждение!")
                         return
     
     await state.set_state(MatchStates.in_game)
@@ -1260,22 +1275,31 @@ async def _notify_opponent_penalty_result(bot, match, penalty_user_id: UUID, suc
 # ==================== ЖЁЛТАЯ КАРТОЧКА (ПРЕДУПРЕЖДЕНИЕ) ====================
 
 
-async def _notify_yellow_card_owner_with_choice(bot, match, target_manager_id: UUID):
-    """Отправить владельцу игрока выбор, какое действие потерять (PvP)"""
+async def _notify_yellow_card_owner_with_choice(bot, match, chooser_manager_id: UUID):
+    """Отправить СОПЕРНИКУ владельца игрока выбор, какое действие убрать (PvP).
+
+    chooser_manager_id — менеджер, КОТОРЫЙ ВЫБИРАЕТ (соперник владельца).
+    Целевой игрок принадлежит другому менеджеру (владельцу).
+    """
     import logging
     logger = logging.getLogger(__name__)
     
     storage = get_storage()
-    owner = storage.get_user_by_id(target_manager_id)
+    chooser = storage.get_user_by_id(chooser_manager_id)
     
-    if not owner:
-        logger.warning(f"[PVP] Yellow card target manager not found: {target_manager_id}")
+    if not chooser:
+        logger.warning(f"[PVP] Yellow card chooser not found: {chooser_manager_id}")
         return
     
-    # Находим целевого игрока
+    # Находим целевого игрока в любой команде
     target_pid = match.current_turn.yellow_card_target_player_id
-    target_team = match.get_team(target_manager_id)
-    target_player = target_team.get_player_by_id(target_pid) if target_team and target_pid else None
+    target_player = None
+    for t in [match.team1, match.team2]:
+        if t:
+            p = t.get_player_by_id(target_pid) if target_pid else None
+            if p:
+                target_player = p
+                break
     
     if not target_player:
         return
@@ -1286,7 +1310,7 @@ async def _notify_yellow_card_owner_with_choice(bot, match, target_manager_id: U
     
     text = (
         f"🟡 <b>ПРЕДУПРЕЖДЕНИЕ!</b>\n\n"
-        f"Ваш игрок <b>{target_player.name}</b> получил жёлтую карточку.\n"
+        f"Игрок соперника <b>{target_player.name}</b> получил жёлтую карточку.\n"
         f"Текущие действия: "
     )
     stats_parts = []
@@ -1297,17 +1321,17 @@ async def _notify_yellow_card_owner_with_choice(bot, match, target_manager_id: U
     if target_player.stats.saves > 0:
         stats_parts.append(f"🛡{target_player.stats.saves}")
     text += " ".join(stats_parts) if stats_parts else "нет"
-    text += "\n\nВыберите, какое действие потерять:"
+    text += "\n\nВыберите, какое действие убрать:"
     
     try:
         await bot.send_message(
-            chat_id=owner.telegram_id,
+            chat_id=chooser.telegram_id,
             text=text,
             reply_markup=Keyboards.yellow_card_choice(has_goals, has_passes, has_saves)
         )
-        logger.info(f"[PVP] Yellow card choice sent to {owner.telegram_id}")
+        logger.info(f"[PVP] Yellow card choice sent to chooser {chooser.telegram_id}")
     except Exception as e:
-        logger.error(f"[PVP] Failed to notify yellow card owner: {e}")
+        logger.error(f"[PVP] Failed to notify yellow card chooser: {e}")
 
 
 @router.callback_query(F.data.startswith("yellow_card_action:"))

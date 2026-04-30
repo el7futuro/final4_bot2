@@ -70,7 +70,7 @@ CARD_TARGETS = {
     CardType.OFFSIDE: CardTarget.OPPONENT_PLAYER,    # отменяет гол соперника
     CardType.VAR: CardTarget.OPPONENT_TEAM,          # отменяет карточку соперника
     CardType.RED_CARD: CardTarget.SELF_PLAYER,   # удаление действий своего игрока
-    CardType.YELLOW_CARD: CardTarget.OPPONENT_PLAYER, # -1 действие у соперника
+    CardType.YELLOW_CARD: CardTarget.SELF_PLAYER, # -1 действие у СВОЕГО игрока (соперник выбирает какое)
     
     # Особые
     CardType.PENALTY: CardTarget.SELF_PLAYER,        # розыгрыш пенальти

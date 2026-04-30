@@ -266,14 +266,23 @@ class WhistleDeck:
             match.current_turn.waiting_for_penalty_roll = True
         
         # Предупреждение — ждём выбор соперника
+        # ПРАВИЛО: жёлтая карточка применяется к СВОЕМУ игроку (тому кто вытянул),
+        # но действие убирает СОПЕРНИК на свой выбор.
         if effect.requires_yellow_card_choice and match.current_turn and effect.target_player_id:
             match.current_turn.waiting_for_yellow_card_choice = True
-            # Определяем, кому принадлежит целевой игрок
+            # Целевой игрок — СВОЙ. Найдём владельца игрока, чтобы соперник 
+            # стал тем, кто принимает решение.
             for team in [match.team1, match.team2]:
                 if team:
                     p = team.get_player_by_id(effect.target_player_id)
                     if p:
-                        match.current_turn.yellow_card_target_manager_id = team.manager_id
+                        owner_id = team.manager_id
+                        # Соперник — тот, кто будет выбирать какое действие убрать
+                        chooser_id = (
+                            match.manager2_id if owner_id == match.manager1_id
+                            else match.manager1_id
+                        )
+                        match.current_turn.yellow_card_target_manager_id = chooser_id
                         match.current_turn.yellow_card_target_player_id = effect.target_player_id
                         match.current_turn.yellow_card_id = effect.card_id
                         break

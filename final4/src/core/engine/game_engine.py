@@ -703,11 +703,12 @@ class GameEngine:
         """
         Разрешить предупреждение (жёлтую карточку).
         
-        СОПЕРНИК сам выбирает, какое полезное действие потерять.
+        ПРАВИЛО: жёлтая карточка применяется к СВОЕМУ игроку того, кто вытянул.
+        Соперник владельца игрока выбирает, какое именно действие убрать.
         
         Args:
             match: Матч
-            manager_id: ID менеджера, чей игрок получил предупреждение (он выбирает)
+            manager_id: ID СОПЕРНИКА (того, кто принимает решение)
             action_type: "goal", "pass" или "save"
         
         Returns:
@@ -726,13 +727,17 @@ class GameEngine:
         if not player_id:
             raise ValueError("Целевой игрок не найден")
         
-        # Находим игрока
-        team = match.get_team(manager_id)
-        if not team:
-            raise ValueError("Команда не найдена")
-        
-        player = team.get_player_by_id(player_id)
-        if not player:
+        # Игрок может быть в любой команде — ищем владельца
+        player = None
+        owner_manager_id = None
+        for team in [match.team1, match.team2]:
+            if team:
+                p = team.get_player_by_id(player_id)
+                if p:
+                    player = p
+                    owner_manager_id = team.manager_id
+                    break
+        if not player or owner_manager_id is None:
             raise ValueError("Игрок не найден")
         
         # Проверяем что у игрока есть выбранное действие
@@ -748,10 +753,10 @@ class GameEngine:
         # Снимаем действие
         player.remove_action(action_type)
         
-        # Записываем в историю
+        # Записываем в историю — статистика принадлежит ВЛАДЕЛЬЦУ игрока
         history = self.get_match_history(match)
         if history:
-            stats = history.get_player_stats(manager_id, player_id, match.manager1_id)
+            stats = history.get_player_stats(owner_manager_id, player_id, match.manager1_id)
             if stats:
                 if action_type == "goal":
                     stats.remove_goals(1, "предупреждение")

@@ -149,7 +149,11 @@ class TestRedCardTargeting:
 
 
 class TestYellowCardTargeting:
-    """Тесты: Предупреждение (YELLOW_CARD) — соперник САМ выбирает действие"""
+    """Тесты: Предупреждение (YELLOW_CARD) — соперник владельца игрока выбирает действие.
+    
+    ПРАВИЛО: тот, кто вытянул карточку, "получает" предупреждение на СВОЕГО игрока.
+    СОПЕРНИК выбирает, какое действие у этого игрока убрать.
+    """
     
     def test_yellow_card_sets_waiting_flag(self, setup_match, manager1_id, manager2_id):
         """YELLOW_CARD ставит флаг ожидания выбора соперника"""
@@ -159,7 +163,8 @@ class TestYellowCardTargeting:
         card.applied_by_manager_id = manager1_id
         card.turn_applied = 2
         
-        target_player_id = match.current_turn.manager2_player_id
+        # M1 вытянул → target = СВОЙ игрок (defender1)
+        target_player_id = match.current_turn.manager1_player_id
         
         effect = WhistleDeck.get_card_effect(card, match, manager1_id, target_player_id)
         
@@ -170,59 +175,75 @@ class TestYellowCardTargeting:
         assert effect.saves_removed == 0
     
     def test_yellow_card_apply_sets_turn_state(self, setup_match, manager1_id, manager2_id):
-        """apply_effect устанавливает waiting_for_yellow_card_choice"""
+        """apply_effect устанавливает waiting_for_yellow_card_choice.
+        Целевой игрок — свой (defender1), chooser — соперник (manager2)."""
         match, engine, defender1, defender2 = setup_match
         
         card = WhistleCard(card_type=CardType.YELLOW_CARD)
         card.applied_by_manager_id = manager1_id
         card.turn_applied = 2
         
-        target_player_id = match.current_turn.manager2_player_id
+        # M1 вытянул → target = свой игрок
+        target_player_id = match.current_turn.manager1_player_id
         
         effect = WhistleDeck.get_card_effect(card, match, manager1_id, target_player_id)
         history = engine.get_match_history(match)
         WhistleDeck.apply_effect(match, effect, history)
         
         assert match.current_turn.waiting_for_yellow_card_choice is True
+        # chooser = СОПЕРНИК владельца (manager2)
         assert match.current_turn.yellow_card_target_manager_id == manager2_id
-        assert match.current_turn.yellow_card_target_player_id == defender2.id
+        # target_player = свой игрок M1 (defender1)
+        assert match.current_turn.yellow_card_target_player_id == defender1.id
     
     def test_resolve_yellow_card_removes_goal(self, setup_match, manager1_id, manager2_id):
-        """resolve_yellow_card снимает выбранный гол"""
+        """resolve_yellow_card снимает выбранный гол у игрока владельца карточки"""
         match, engine, defender1, defender2 = setup_match
-        # defender2: saves=2, goals=1
+        # defender1 (свой M1): passes=1, goals=1
         
         card = WhistleCard(card_type=CardType.YELLOW_CARD)
         card.applied_by_manager_id = manager1_id
         card.turn_applied = 2
         
-        target_player_id = match.current_turn.manager2_player_id
+        target_player_id = match.current_turn.manager1_player_id
         effect = WhistleDeck.get_card_effect(card, match, manager1_id, target_player_id)
         history = engine.get_match_history(match)
         WhistleDeck.apply_effect(match, effect, history)
         
-        # Соперник (manager2) выбирает снять гол
+        # СОПЕРНИК (manager2) выбирает снять гол у defender1 (M1's)
         match = engine.resolve_yellow_card(match, manager2_id, "goal")
         
-        assert defender2.stats.goals == 0
-        assert defender2.stats.saves == 2  # не тронуто
+        assert defender1.stats.goals == 0  # был 1
+        assert defender1.stats.passes == 1  # не тронут
+        # defender2 не должен быть тронут
+        assert defender2.stats.saves == 2
+        assert defender2.stats.goals == 1
         assert match.current_turn.waiting_for_yellow_card_choice is False
     
     def test_resolve_yellow_card_removes_save(self, setup_match, manager1_id, manager2_id):
-        """resolve_yellow_card снимает выбранное отбитие"""
+        """resolve_yellow_card снимает выбранное отбитие у игрока владельца карточки.
+        
+        Когда M2 вытягивает карточку — target = defender2 (свой M2),
+        chooser = M1.
+        """
         match, engine, defender1, defender2 = setup_match
+        # defender2 (свой M2): saves=2, goals=1
         
         card = WhistleCard(card_type=CardType.YELLOW_CARD)
-        card.applied_by_manager_id = manager1_id
+        card.applied_by_manager_id = manager2_id
         card.turn_applied = 2
         
         target_player_id = match.current_turn.manager2_player_id
-        effect = WhistleDeck.get_card_effect(card, match, manager1_id, target_player_id)
+        effect = WhistleDeck.get_card_effect(card, match, manager2_id, target_player_id)
         history = engine.get_match_history(match)
         WhistleDeck.apply_effect(match, effect, history)
         
-        # Соперник выбирает снять отбитие
-        match = engine.resolve_yellow_card(match, manager2_id, "save")
+        # chooser = M1
+        assert match.current_turn.yellow_card_target_manager_id == manager1_id
+        assert match.current_turn.yellow_card_target_player_id == defender2.id
+        
+        # M1 (соперник) выбирает снять отбитие у defender2 (M2's)
+        match = engine.resolve_yellow_card(match, manager1_id, "save")
         
         assert defender2.stats.saves == 1  # было 2, стало 1
         assert defender2.stats.goals == 1  # не тронуто
@@ -230,21 +251,21 @@ class TestYellowCardTargeting:
     def test_resolve_yellow_card_rejects_empty_action(self, setup_match, manager1_id, manager2_id):
         """resolve_yellow_card отклоняет действие если его нет у игрока"""
         match, engine, defender1, defender2 = setup_match
-        # defender2: saves=2, goals=1, passes=0
+        # defender1 (свой M1): passes=1, goals=1, saves=0
         
         card = WhistleCard(card_type=CardType.YELLOW_CARD)
         card.applied_by_manager_id = manager1_id
         card.turn_applied = 2
         
-        target_player_id = match.current_turn.manager2_player_id
+        target_player_id = match.current_turn.manager1_player_id
         effect = WhistleDeck.get_card_effect(card, match, manager1_id, target_player_id)
         history = engine.get_match_history(match)
         WhistleDeck.apply_effect(match, effect, history)
         
-        # Пытаемся снять передачу которой нет
+        # Пытаемся снять отбитие которой нет (defender1 имеет saves=0)
         import pytest
-        with pytest.raises(ValueError, match="нет передач"):
-            engine.resolve_yellow_card(match, manager2_id, "pass")
+        with pytest.raises(ValueError, match="нет отбитий"):
+            engine.resolve_yellow_card(match, manager2_id, "save")
 
 
 class TestAutoDrawTargeting:

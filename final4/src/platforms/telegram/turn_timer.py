@@ -392,20 +392,34 @@ async def _auto_resolve_post_dice(engine, storage, match) -> None:
 
     # Жёлтая карточка — берём первое доступное действие
     if match.current_turn.waiting_for_yellow_card_choice:
-        target_mgr = match.current_turn.yellow_card_target_manager_id
+        chooser_mgr = match.current_turn.yellow_card_target_manager_id  # КТО ВЫБИРАЕТ
         target_pid = match.current_turn.yellow_card_target_player_id
-        target_team = match.get_team(target_mgr) if target_mgr else None
-        if target_team and target_pid:
-            tp = target_team.get_player_by_id(target_pid)
-            if tp:
+        # Целевой игрок может быть в любой команде
+        target_player = None
+        for t in [match.team1, match.team2]:
+            if t and target_pid:
+                p = t.get_player_by_id(target_pid)
+                if p:
+                    target_player = p
+                    break
+        if chooser_mgr and target_player:
+            tp = target_player
+            try:
                 if tp.stats.saves > 0:
-                    match = engine.resolve_yellow_card(match, target_mgr, "save")
+                    match = engine.resolve_yellow_card(match, chooser_mgr, "save")
                 elif tp.stats.passes > 0:
-                    match = engine.resolve_yellow_card(match, target_mgr, "pass")
+                    match = engine.resolve_yellow_card(match, chooser_mgr, "pass")
                 elif tp.stats.goals > 0:
-                    match = engine.resolve_yellow_card(match, target_mgr, "goal")
+                    match = engine.resolve_yellow_card(match, chooser_mgr, "goal")
                 else:
+                    # У игрока нет действий — карточка ничего не делает
                     match.current_turn.waiting_for_yellow_card_choice = False
+                    match.current_turn.yellow_card_target_manager_id = None
+                    match.current_turn.yellow_card_target_player_id = None
+                    match.current_turn.yellow_card_id = None
+            except ValueError as e:
+                logger.warning(f"[TIMER] resolve_yellow_card failed: {e}")
+                match.current_turn.waiting_for_yellow_card_choice = False
 
     # Пенальти-карточка — авто-выбор "high"
     if match.current_turn.waiting_for_penalty_roll:
